@@ -1,0 +1,35 @@
+name: Export iFlow from CPI
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Get OAuth Token
+        run: |
+          TOKEN=$(curl -s -X POST ${{ secrets.CPI_TOKEN_URL }} \
+          -d "grant_type=client_credentials" \
+          -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
+          | jq -r .access_token)
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: Download iFlow
+        run: |
+          curl -H "Authorization: Bearer $TOKEN" \
+          "${{ secrets.CPI_BASE_URL }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='active')/\$value" \
+          -o MyiFlow.zip
+
+      - name: Commit & Push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "Auto export from CPI"
+          git push
