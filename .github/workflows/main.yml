@@ -10,28 +10,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
-     - name: Get OAuth Token
-  run: |
-    TOKEN=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
-    -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
-    -d "grant_type=client_credentials" \
-    | jq -r .access_token)
+      - name: Get OAuth Token
+        run: |
+          echo "Requesting OAuth token..."
 
-    echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+          RESPONSE=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
+          -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
+          -d "grant_type=client_credentials")
 
-      - name: Download iFlow
-  run: |
-    curl -L \
-    -H "Authorization: Bearer $TOKEN" \
-    "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('MyiFlow')/\$value" \
-    -o MyiFlow.zip
+          echo "OAuth Response:"
+          echo $RESPONSE
 
-      - name: Commit and Push
+          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: Download iFlow from CPI
+        run: |
+          echo "Downloading iFlow artifact..."
+
+          curl -L \
+          -H "Authorization: Bearer $TOKEN" \
+          "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('MyiFlow')/\$value" \
+          -o MyiFlow.zip
+
+      - name: Verify File
+        run: |
+          echo "Checking downloaded files..."
+          ls -l
+
+      - name: Commit and Push to GitHub
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+
           git add MyiFlow.zip
-          git commit -m "Auto export from CPI"
+
+          git commit -m "Auto export iFlow from CPI $(date)" || echo "No changes"
+
           git push
