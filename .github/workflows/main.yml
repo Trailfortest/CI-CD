@@ -12,21 +12,21 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Get OAuth Token
-        run: |
-          TOKEN=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
-          -d "grant_type=client_credentials" \
-          -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
-          | jq -r .access_token)
+     - name: Get OAuth Token
+  run: |
+    TOKEN=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
+    -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
+    -d "grant_type=client_credentials" \
+    | jq -r .access_token)
 
-          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+    echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: Download iFlow
-        run: |
-          curl -L \
-          -H "Authorization: Bearer $TOKEN" \
-          "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('MyiFlow')/\$value" \
-          -o MyiFlow.zip
+  run: |
+    curl -L \
+    -H "Authorization: Bearer $TOKEN" \
+    "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('MyiFlow')/\$value" \
+    -o MyiFlow.zip
 
       - name: Commit and Push
         run: |
