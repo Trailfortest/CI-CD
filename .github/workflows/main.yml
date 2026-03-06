@@ -1,54 +1,52 @@
-name: Export iFlow from CPI
+name: Export All iFlows from CPI
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '0 0 * * *' # Runs daily at midnight
   workflow_dispatch:
 
 jobs:
-  export:
+  export-all:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
       - name: Get OAuth Token
+        id: oauth
         run: |
-          echo "Requesting OAuth token..."
-
           RESPONSE=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
-          -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
-          -d "grant_type=client_credentials")
-
-          echo "OAuth Response:"
-          echo $RESPONSE
-
+            -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
+            -d "grant_type=client_credentials")
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-
+          if [ "$TOKEN" == "null" ]; then echo "Token failed"; exit 1; fi
           echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
-      - name: Download iFlow from CPI
+      - name: Fetch and Download All iFlows
         run: |
-          echo "Downloading iFlow artifact..."
+          echo "Fetching list of all artifacts..."
+          # Query all artifacts in JSON format
+          ARTIFACTS_JSON=$(curl -s -H "Authorization: Bearer ${{ env.TOKEN }}" \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$format=json")
+          
+          # Extract all IDs into a space-separated list
+          IDS=$(echo $ARTIFACTS_JSON | jq -r '.d.results[].Id')
+          
+          mkdir -p iflows_backup
+          
+          for ID in $IDS; do
+            echo "Downloading: $ID"
+            # Download the artifact as a ZIP file
+            # Version='active' ensures you get the latest version
+            curl -f -L -H "Authorization: Bearer ${{ env.TOKEN }}" \
+              "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='$ID',Version='active')/\$value" \
+              -o "iflows_backup/${ID}.zip"
+          done
 
-          curl -L \
-          -H "Authorization: Bearer $TOKEN" \
-          "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('MyiFlow')/\$value" \
-          -o MyiFlow.zip
-
-      - name: Verify File
-        run: |
-          echo "Checking downloaded files..."
-          ls -l
-
-      - name: Commit and Push to GitHub
+      - name: Commit and Push
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-
-          git add MyiFlow.zip
-
-          git commit -m "Auto export iFlow from CPI $(date)" || echo "No changes"
-
+          git add iflows_backup/
+          git commit -m "Full iFlow export: $(date)" || echo "No changes to commit"
           git push
