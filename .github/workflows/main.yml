@@ -35,7 +35,7 @@ jobs:
             -o changed_interfaces.json
 
       - name: Upload Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: changed-interfaces
           path: changed_interfaces.json
