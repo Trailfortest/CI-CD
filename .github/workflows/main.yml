@@ -1,74 +1,86 @@
 name: Fetch Changed SAP CPI Interfaces
 
 on:
-  schedule:
-    - cron: '0 2 * * *' # Runs daily at 2 AM UTC
-  workflow_dispatch:
+schedule:
+- cron: '0 2 * * *'
+workflow_dispatch:
 
 env:
-  INTERFACES_DIR: cpi-interfaces
-  GIT_USER_NAME: github-actions[bot]
-  GIT_USER_EMAIL: github-actions[bot]@users.noreply.github.com
+INTERFACES_DIR: cpi-interfaces
+GIT_USER_NAME: github-actions[bot]
+GIT_USER_EMAIL: github-actions[bot]@users.noreply.github.com
 
 jobs:
-  fetch-cpi-interfaces:
-    runs-on: ubuntu-latest
+fetch-cpi-interfaces:
+runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+```
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
+  - name: Set up Python
+    uses: actions/setup-python@v4
+    with:
+      python-version: "3.10"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests pyyaml
+  - name: Install dependencies
+    run: |
+      python -m pip install --upgrade pip
+      pip install requests
 
-      - name: Create interfaces directory
-        run: mkdir -p ${{ env.INTERFACES_DIR }}
+  - name: Create interfaces directory
+    run: mkdir -p ${{ env.INTERFACES_DIR }}
 
-      - name: Fetch changed interfaces from SAP CPI Dev
-        env:
-          CPI_HOST: ${{ secrets.CPI_DEV_HOST }}
-          CPI_TOKEN_URL: ${{ secrets.CPI_DEV_TOKEN_URL }}
-          CPI_CLIENT_ID: ${{ secrets.CPI_DEV_CLIENT_ID }}
-          CPI_CLIENT_SECRET: ${{ secrets.CPI_DEV_CLIENT_SECRET }}
-        run: |
-          python scripts/fetch_cpi_interfaces.py
+  - name: Fetch changed interfaces from SAP CPI Dev
+    env:
+      CPI_HOST: ${{ secrets.CPI_DEV_HOST }}
+      CPI_TOKEN_URL: ${{ secrets.CPI_DEV_TOKEN_URL }}
+      CPI_CLIENT_ID: ${{ secrets.CPI_DEV_CLIENT_ID }}
+      CPI_CLIENT_SECRET: ${{ secrets.CPI_DEV_CLIENT_SECRET }}
+      INTERFACES_DIR: ${{ env.INTERFACES_DIR }}
+    run: |
+      python scripts/fetch_cpi_interfaces.py
 
-      - name: Check for changes
-        id: check_changes
-        run: |
-          if git diff --quiet; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "Changed files:"
-            git diff --name-only
-          fi
+  - name: Check for changes
+    id: check_changes
+    run: |
+      if git diff --quiet; then
+        echo "has_changes=false" >> $GITHUB_OUTPUT
+      else
+        echo "has_changes=true" >> $GITHUB_OUTPUT
+        echo "Changed files:"
+        git diff --name-only
+      fi
 
-      - name: Commit and push changes
-        if: steps.check_changes.outputs.has_changes == 'true'
-        run: |
-          git config --local user.name "${{ env.GIT_USER_NAME }}"
-          git config --local user.email "${{ env.GIT_USER_EMAIL }}"
-          git add ${{ env.INTERFACES_DIR }}/
-          git commit -m "chore: sync SAP CPI interfaces from dev environment
+  - name: Commit and push changes
+    if: steps.check_changes.outputs.has_changes == 'true'
+    run: |
+      git config --local user.name "${{ env.GIT_USER_NAME }}"
+      git config --local user.email "${{ env.GIT_USER_EMAIL }}"
+      git add ${{ env.INTERFACES_DIR }}/
+      git commit -m "chore: sync SAP CPI interfaces from dev environment
+```
 
-- Timestamp: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
-- Triggered by: ${{ github.event_name }}"
-          git push
+* Timestamp: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+* Triggered by: ${{ github.event_name }}"
+  git push
 
-      - name: Create summary
-        run: |
-          echo "## SAP CPI Interface Sync Report" >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** $([ ${{ steps.check_changes.outputs.has_changes }} = 'true' ] && echo 'Changes pushed' || echo 'No changes')" >> $GITHUB_STEP_SUMMARY
-          echo "**Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "**Directory:** ${{ env.INTERFACES_DIR }}" >> $GITHUB_STEP_SUMMARY
-                                                                                                                                                             
+  ```
+  - name: Create summary
+    run: |
+      STATUS="${{ steps.check_changes.outputs.has_changes }}"
+
+      if [ "$STATUS" = "true" ]; then
+        RESULT="Changes pushed"
+      else
+        RESULT="No changes"
+      fi
+
+      echo "## SAP CPI Interface Sync Report" >> $GITHUB_STEP_SUMMARY
+      echo "**Status:** $RESULT" >> $GITHUB_STEP_SUMMARY
+      echo "**Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+      echo "**Directory:** ${{ env.INTERFACES_DIR }}" >> $GITHUB_STEP_SUMMARY
+  ```
