@@ -2,13 +2,18 @@ name: SAP CPI Interface Change Fetch
 
 on:
   workflow_dispatch:
+    inputs:
+      package:
+        description: "Package name to fetch"
+        required: true
+        default: "test"
   schedule:
     - cron: "0 3 * * *"   # daily at 3 AM
 
 jobs:
   fetch-changes:
     runs-on: ubuntu-latest
-    environment: dev   # use the environment where secrets are stored
+    environment: dev   # environment where secrets are stored
 
     steps:
       - name: Checkout
@@ -23,16 +28,19 @@ jobs:
             -d "grant_type=client_credentials" \
             "${{ secrets.CPI_TOKEN_URL }}")
 
-          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+          echo "ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
 
-      - name: Fetch CPI iFlows from package test
-  run: |
-    curl -s -X GET \
-      "${CPI_HOST}/api/v1/IntegrationDesigntimeArtifacts?\$filter=PackageId eq 'test'" \
-      -H "Authorization: Bearer $ACCESS_TOKEN" \
-      -H "Accept: application/json" \
-      -o changed_interfaces.json
+      - name: Fetch CPI iFlows from selected package
+        run: |
+          PACKAGE_NAME="${{ github.event.inputs.package }}"
+          echo "Fetching iFlows from package: $PACKAGE_NAME"
+
+          curl -s -X GET \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$filter=PackageId eq '$test'" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Accept: application/json" \
+            -o changed_interfaces.json
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
