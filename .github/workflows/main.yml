@@ -34,7 +34,7 @@ jobs:
       - name: Fetch CPI iFlows from selected package
         run: |
           PACKAGE_NAME="${{ github.event.inputs.package }}"
-          echo "Fetching iFlows from package: $PACKAGE_NAME"
+          echo "Fetching iFlows from package: $test"
 
           curl -s -X GET \
             "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$filter=PackageId eq '$test'" \
