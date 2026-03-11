@@ -1,4 +1,4 @@
-name: Manual Sync All CPI Interfaces
+name: Manul Sync All CPI Interfaces
 
 on:
   workflow_dispatch:   # Only runs when triggered manually
