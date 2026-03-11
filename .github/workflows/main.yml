@@ -24,14 +24,16 @@ jobs:
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Fetch all iFlows metadata
-        run: |
-          curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts" \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -o flows.json
-          cat flows.json | jq '.d.results[].Id' > flow_ids.txt
-          echo "Found flows:"
-          cat flow_ids.txt
+     - name: Fetch all iFlows metadata
+  run: |
+    curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?$format=json" \
+      -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+      -o flows.json
+    echo "Raw response:"
+    cat flows.json
+    cat flows.json | jq -r '.d.results[].Id' > flow_ids.txt || echo "No valid JSON found"
+    echo "Found flows:"
+    cat flow_ids.txt
 
       - name: Download and unpack each iFlow
         run: |
