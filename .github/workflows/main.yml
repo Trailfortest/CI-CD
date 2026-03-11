@@ -7,31 +7,24 @@ jobs:
   sync:
     runs-on: ubuntu-latest
 
+    environment: dev   # use the environment named 'dev'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up environment
-        env:
-          CPI_HOST: ${{ secrets.CPI_HOST }}
-          CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
-          CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
-          CPI_TOKEN_URL: ${{ secrets.CPI_TOKEN_URL }}
-        run: echo "Environment variables set"
-
       - name: Get OAuth token
         id: get_token
         run: |
-          RESPONSE=$(curl -s -X POST "$CPI_TOKEN_URL" \
+          RESPONSE=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials&client_id=$CPI_CLIENT_ID&client_secret=$CPI_CLIENT_SECRET")
+            -d "grant_type=client_credentials&client_id=${{ secrets.CPI_CLIENT_ID }}&client_secret=${{ secrets.CPI_CLIENT_SECRET }}")
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Fetch all iFlows metadata
-        id: fetch_flows
         run: |
-          curl -s -X GET "$CPI_HOST/api/v1/IntegrationDesigntimeArtifacts" \
+          curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts" \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
             -o flows.json
           cat flows.json | jq '.d.results[].Id' > flow_ids.txt
@@ -44,7 +37,7 @@ jobs:
           while read FLOW_ID; do
             FLOW_ID=$(echo $FLOW_ID | tr -d '"')
             echo "Downloading $FLOW_ID..."
-            curl -s -X GET "$CPI_HOST/api/v1/IntegrationDesigntimeArtifacts('$FLOW_ID')/Content" \
+            curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('$FLOW_ID')/Content" \
               -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
               -o "$FLOW_ID.zip"
             unzip -o "$FLOW_ID.zip" -d "cpi_artifacts/$FLOW_ID"
