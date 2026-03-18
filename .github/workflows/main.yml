@@ -1,119 +1,41 @@
-name: Manual Sync All CPI Interfaces
+name: SAP CPI Interface Change Fetch
 
 on:
   workflow_dispatch:
-  # Optional: enable automatic sync
-  # schedule:
-  #   - cron: "0 */6 * * *"   # every 6 hours
-
-permissions:
-  contents: write
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3 AM
 
 jobs:
-  sync:
+  fetch-changes:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: dev   # use the environment where secrets are stored
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq unzip
-
-      - name: Get OAuth token
+      - name: Get OAuth Token
         id: get_token
         run: |
-          echo "Fetching OAuth token..."
-
-          RESPONSE=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
+          RESPONSE=$(curl -s -X POST \
+            -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials&client_id=${{ secrets.CPI_CLIENT_ID }}&client_secret=${{ secrets.CPI_CLIENT_SECRET }}")
+            -d "grant_type=client_credentials" \
+            "${{ secrets.CPI_TOKEN_URL }}")
 
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-
-          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
-            echo "❌ Failed to fetch token"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-
-          echo "✅ Token fetched successfully"
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Fetch all iFlows metadata
+      - name: Fetch Changed Interfaces
         run: |
-          echo "Fetching iFlow metadata..."
-
-          curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+          curl -s -X GET \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationContentChangedInterfaces" \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -o flows.json
+            -H "Accept: application/json" \
+            -o changed_interfaces.json
 
-          if [ ! -s flows.json ]; then
-            echo "❌ Empty response from CPI"
-            exit 1
-          fi
-
-          echo "Extracting flow IDs..."
-
-          jq -r '.d.results[].Id' flows.json > flow_ids.txt
-
-          if [ ! -s flow_ids.txt ]; then
-            echo "❌ No iFlows found"
-            exit 1
-          fi
-
-          echo "✅ Found iFlows:"
-          cat flow_ids.txt
-
-      - name: Clean old artifacts
-        run: |
-          echo "Cleaning old artifacts..."
-          rm -rf cpi_artifacts
-          mkdir -p cpi_artifacts
-
-      - name: Download and unpack each iFlow
-        run: |
-          echo "Downloading iFlows..."
-
-          while read FLOW_ID; do
-            FLOW_ID=$(echo $FLOW_ID | tr -d '"')
-
-            echo "➡️ Processing $FLOW_ID"
-
-            curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('$FLOW_ID')/Content" \
-              -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-              -o "$FLOW_ID.zip"
-
-            if [ ! -s "$FLOW_ID.zip" ]; then
-              echo "⚠️ Failed to download $FLOW_ID"
-              continue
-            fi
-
-            unzip -o "$FLOW_ID.zip" -d "cpi_artifacts/$FLOW_ID" >/dev/null
-            rm "$FLOW_ID.zip"
-
-          done < flow_ids.txt
-
-          echo "✅ Download completed"
-
-      - name: Commit and push changes
-        run: |
-          echo "Checking for changes..."
-
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add cpi_artifacts
-
-          if git diff --cached --quiet; then
-            echo "✅ No changes detected"
-          else
-            echo "🚀 Changes detected, committing..."
-
-            git commit -m "Sync CPI interfaces (auto)"
-
-            git push
-          fi
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-interfaces
+          path: changed_interfaces.json
