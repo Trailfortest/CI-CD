@@ -1,19 +1,20 @@
-name: Manul Sync All CPI Interfaces
+name: Manual Sync All CPI Interfaces
 
 on:
-  workflow_dispatch:   # Only runs when triggered manually
+  workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-    environment: dev   # use the environment named 'dev'
+    environment: dev
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq unzip
 
       - name: Get OAuth token
         id: get_token
@@ -21,36 +22,63 @@ jobs:
           RESPONSE=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials&client_id=${{ secrets.CPI_CLIENT_ID }}&client_secret=${{ secrets.CPI_CLIENT_SECRET }}")
+
+          echo "Response: $RESPONSE"
+
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+
+          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+            echo "Failed to fetch token"
+            exit 1
+          fi
+
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-     - name: Fetch all iFlows metadata
-  run: |
-    curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?$format=json" \
-      -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-      -o flows.json
-    echo "Raw response:"
-    cat flows.json
-    cat flows.json | jq -r '.d.results[].Id' > flow_ids.txt || echo "No valid JSON found"
-    echo "Found flows:"
-    cat flow_ids.txt
+      - name: Fetch all iFlows metadata
+        run: |
+          curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+            -o flows.json
+
+          echo "Raw response:"
+          cat flows.json
+
+          jq -r '.d.results[].Id' flows.json > flow_ids.txt
+
+          echo "Found flows:"
+          cat flow_ids.txt
+
+      - name: Clean old artifacts (optional but recommended)
+        run: |
+          rm -rf cpi_artifacts
+          mkdir -p cpi_artifacts
 
       - name: Download and unpack each iFlow
         run: |
-          mkdir -p cpi_artifacts
           while read FLOW_ID; do
             FLOW_ID=$(echo $FLOW_ID | tr -d '"')
+
             echo "Downloading $FLOW_ID..."
+
             curl -s -X GET "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('$FLOW_ID')/Content" \
               -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
               -o "$FLOW_ID.zip"
+
             unzip -o "$FLOW_ID.zip" -d "cpi_artifacts/$FLOW_ID"
+            rm "$FLOW_ID.zip"
+
           done < flow_ids.txt
 
       - name: Commit and push changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
           git add cpi_artifacts
-          git commit -m "Manual sync of all CPI interfaces" || echo "No changes to commit"
-          git push
+
+          if git diff --cached --quiet; then
+            echo "No changes detected"
+          else
+            git commit -m "Sync CPI interfaces (auto)"
+            git push
+          fi
