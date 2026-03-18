@@ -29,7 +29,7 @@ jobs:
       - name: Fetch Changed Interfaces
         run: |
           curl -s -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(id=Myiflow)?\$format=json" \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('Myiflow')/Content \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
             -H "Accept: application/json" \
             -o changed_interfaces.json
