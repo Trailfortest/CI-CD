@@ -26,13 +26,14 @@ jobs:
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Fetch Changed Interfaces
-        run: |
-          curl -s -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('Myiflow')/Content \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -H "Accept: application/json" \
-            -o changed_interfaces.json
+     - name: Fetch Single Artifact Content
+  run: |
+    curl -s -X GET \
+      "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('Myiflow')/Content" \
+      -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+      -H "Accept: application/json" \
+      -o Myiflow.zip
+
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
