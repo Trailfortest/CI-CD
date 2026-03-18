@@ -1,7 +1,9 @@
 name: SAP CPI Interface Change Fetch
 
 on:
-  workflow_dispatch   # manual trigger only
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3 AM
 
 jobs:
   fetch-changes:
@@ -15,7 +17,6 @@ jobs:
       - name: Get OAuth Token
         id: get_token
         run: |
-          echo "Fetching OAuth token..."
           RESPONSE=$(curl -s -X POST \
             -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
@@ -23,28 +24,15 @@ jobs:
             "${{ secrets.CPI_TOKEN_URL }}")
 
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
-            echo "❌ Failed to fetch token"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-          echo "✅ Token fetched successfully"
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Fetch Changed Interfaces
         run: |
-          echo "Fetching interfaces..."
           curl -s -X GET \
             "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
             -H "Accept: application/json" \
             -o changed_interfaces.json
-
-          if [ ! -s changed_interfaces.json ]; then
-            echo "❌ Empty response from CPI"
-            exit 1
-          fi
-          echo "✅ Interfaces fetched successfully"
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
