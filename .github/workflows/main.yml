@@ -27,12 +27,13 @@ jobs:
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Fetch Changed Interfaces
-        run: |
-          curl -s -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationContent" \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -H "Accept: application/json" \
-            -o changed_interfaces.json
+  run: |
+    curl -s -X GET \
+      "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+      -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+      -H "Accept: application/json" \
+      -o changed_interfaces.json
+
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
