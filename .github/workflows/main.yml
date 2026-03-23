@@ -1,12 +1,14 @@
-name: SAP CPI Interface Sync
+name: SAP CPI Interface Change Fetch
 
 on:
-  workflow_dispatch   # manual trigger only
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3 AM
 
 jobs:
-  sync-artifacts:
+  fetch-changes:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: dev   # use the environment where secrets are stored
 
     steps:
       - name: Checkout
@@ -22,56 +24,18 @@ jobs:
             "${{ secrets.CPI_TOKEN_URL }}")
 
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
-            echo "❌ Failed to fetch token"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Fetch All Artifact IDs
+      - name: Fetch Changed Interfaces
         run: |
           curl -s -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationContentChangedInterfaces" \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
             -H "Accept: application/json" \
-            -o all_artifacts.json
-
-          jq -r '.d.results[].Id' all_artifacts.json > artifact_ids.txt
-
-      - name: Download and Extract Artifacts
-        run: |
-          mkdir -p cpi_artifacts
-          while read FLOW_ID; do
-            FLOW_ID=$(echo $FLOW_ID | tr -d '"')
-            echo "➡️ Processing $FLOW_ID"
-
-            # Download outer ZIP
-            curl -s -X GET \
-              "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('${FLOW_ID}')/Content" \
-              -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-              -o "${FLOW_ID}_outer.zip"
-
-            if [ ! -s "${FLOW_ID}_outer.zip" ]; then
-              echo "⚠️ Failed to download $FLOW_ID"
-              continue
-            fi
-
-            # Extract outer ZIP
-            mkdir -p "cpi_artifacts/$FLOW_ID"
-            unzip -o "${FLOW_ID}_outer.zip" -d "cpi_artifacts/$FLOW_ID" >/dev/null
-
-            # Extract inner ZIP if present
-            INNER_ZIP=$(find "cpi_artifacts/$FLOW_ID" -name "*.zip" | head -n 1)
-            if [ -n "$INNER_ZIP" ]; then
-              unzip -o "$INNER_ZIP" -d "cpi_artifacts/$FLOW_ID" >/dev/null
-            fi
-
-            rm "${FLOW_ID}_outer.zip"
-          done < artifact_ids.txt
+            -o changed_interfaces.json
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
-          name: cpi-artifacts
-          path: cpi_artifacts
+          name: changed-interfaces
+          path: changed_interfaces.json
