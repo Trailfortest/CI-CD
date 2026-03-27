@@ -36,10 +36,21 @@ jobs:
             https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token)
           echo "Token response: $RESPONSE"
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+
+          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+            echo "Client credentials failed, trying password grant..."
+            RESPONSE=$(curl -s -X POST \
+              -u "${{ secrets.BTP_API_USER }}:${{ secrets.BTP_API_PASSWORD }}" \
+              -d "grant_type=password&username=${{ secrets.BTP_TEC_USER }}&password=${{ secrets.BTP_TEC_PASSWORD }}" \
+              https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token)
+            TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+          fi
+
           if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
             echo "Failed to fetch token"
             exit 1
           fi
+
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Download Interfaces
