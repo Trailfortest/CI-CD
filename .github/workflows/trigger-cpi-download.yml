@@ -5,7 +5,7 @@ on:
 
 jobs:
   call-download:
-    uses: Trailfortest/CI-CD/.github/workflows/download-cpi-package.yml@main
+    uses: ./.github/workflows/download-cpi-package.yml
     with:
       workflow-ref: main
       source-env: dev
