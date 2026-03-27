@@ -30,11 +30,12 @@ jobs:
       - name: Request OAuth Token
         id: get-token
         run: |
+          echo "Trying client_credentials grant..."
           RESPONSE=$(curl -s -X POST \
             -u "${{ secrets.BTP_API_USER }}:${{ secrets.BTP_API_PASSWORD }}" \
             -d "grant_type=client_credentials" \
             https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token)
-          echo "Token response: $RESPONSE"
+          echo "Response: $RESPONSE"
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
 
           if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
@@ -43,6 +44,7 @@ jobs:
               -u "${{ secrets.BTP_API_USER }}:${{ secrets.BTP_API_PASSWORD }}" \
               -d "grant_type=password&username=${{ secrets.BTP_TEC_USER }}&password=${{ secrets.BTP_TEC_PASSWORD }}" \
               https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token)
+            echo "Response: $RESPONSE"
             TOKEN=$(echo $RESPONSE | jq -r '.access_token')
           fi
 
