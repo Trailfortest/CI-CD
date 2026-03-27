@@ -1,164 +1,80 @@
-# Copyright (c) 2025 Mercedes-Benz AG
-# Frank Sprünken <accenture.spruenken@extaccount.com>
-#
-# Version History:
-# 1.0.0 - 2025-11-24 - Initial release (F. Spruenken)
-# 1.0.1 - 2026-01-26 - Introduce environment variable RUNS_ON (O. Weng)
-#
 name: Download CPI Package into GIT
 
 on:
-  workflow_call:
+  workflow_dispatch:   # trigger manually from Actions tab
     inputs:
-      workflow-ref:
-        description: "GIT Reference Workflow should run in"
-        required: true
-        type: string
-      source-env:
-        description: "Source Environment"
-        required: true
-        type: string
-      target-ref:
-        description: "GIT Target Reference"
-        required: true
-        type: string
       ids:
-        description: "IDs (1..n) to be downloaded"
+        description: "Comma-separated IDs"
         required: true
         type: string
       mode:
-        description: "Mode IntegrationPackages/PartnerDirectory"
+        description: "IntegrationPackages or PartnerDirectory"
         required: true
         type: string
       commit-message:
-        description: "Commit Message"
+        description: "Commit message"
         required: true
         type: string
-      btp-api-user:
-        description: "BTP Service Key (ClientID) to access Token Endpoint"
-        required: true
-        type: string
-      btp-tec-user:
-        description: "BTP technical User with Access Policy for Integration Suite"
-        required: true
-        type: string
-      btp-token-url:
-        description: "URL on BTP to request Token"
-        required: true
-        type: string
-      btp-api-url:
-        description: "URL on BTP to access APIs"
-        required: true
-        type: string
-      git-cicd-orgrepo:
-        description: "Remote GIT Org/Repo for CICD"
-        required: true
-        type: string
-        
-    secrets:
-      BTP_API_PASSWORD:
-        description: "Client Secret for API User"
-        required: true  
-      BTP_TEC_PASSWORD:
-        description: "Passsword of technical User"
-        required: true
-      GIT_CICD_TOKEN:
-        description: "GIT Token of remote CICD Repo"
-        required: true
-          
+
 permissions:
   contents: write
 
 jobs:
-  preparation:
-    name: Prepare ${{ inputs.mode }} ID(s) 
-    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
-    environment: ${{ inputs.source-env }}
-    outputs:
-      ids-json: ${{ steps.parse-ids.outputs.ids-json }}		
+  download:
+    runs-on: ubuntu-latest
+    environment: dev
 
     steps:
-      - name: Parse IDs
-        id: parse-ids
-        run: |
-          # Convert comma-separated string to JSON array
-          IFS=',' read -ra IDS <<< "${{ inputs.ids }}"
-          JSON_ARRAY="["
-          for i in "${!IDS[@]}"; do
-          # Trim whitespace
-          ID=$(echo "${IDS[$i]}" | xargs)
-          if [ $i -gt 0 ]; then
-          JSON_ARRAY="${JSON_ARRAY},"
-          fi
-          JSON_ARRAY="${JSON_ARRAY}\"${ID}\""
-          done
-          JSON_ARRAY="${JSON_ARRAY}]"
-          echo "ids-json=${JSON_ARRAY}" >> $GITHUB_OUTPUT
-          
-          cat $GITHUB_OUTPUT
-
-  download-id:
-    needs: preparation
-    name: ${{ matrix.id }}
-    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
-    environment: ${{ inputs.source-env }}
-    strategy:
-      max-parallel: 1
-      matrix:
-        id: ${{ fromJson(needs.preparation.outputs.ids-json) }}
-
-    steps:
-      - name: Checkout cicd-actions-intsuite repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.git-cicd-orgrepo }}
-          path: cicd-btp-insuite
-          token: ${{ secrets.GIT_CICD_TOKEN }}
-          ref: ${{ inputs.workflow-ref }}
-
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target-ref }}
-          path: btp-insuite
+          token: ${{ secrets.GIT_CICD_TOKEN }}
+          ref: main
 
-      - name: Check dir ${{ inputs.mode }}
+      - name: Parse IDs
+        id: parse-ids
         run: |
-          if [ ! -d "btp-insuite/${{ inputs.mode }}" ]; then
-            echo "🚫 Directory btp-insuite/${{ inputs.mode }} not found. Creating it..."
-            mkdir -p btp-insuite/${{ inputs.mode }}
-          else
-            echo "✅ Directory btp-insuite/${{ inputs.mode }} found." 
-          fi
-     
+          IFS=',' read -ra IDS <<< "${{ github.event.inputs.ids }}"
+          JSON_ARRAY="["
+          for i in "${!IDS[@]}"; do
+            ID=$(echo "${IDS[$i]}" | xargs)
+            if [ $i -gt 0 ]; then JSON_ARRAY="${JSON_ARRAY},"; fi
+            JSON_ARRAY="${JSON_ARRAY}\"${ID}\""
+          done
+          JSON_ARRAY="${JSON_ARRAY}]"
+          echo "ids-json=${JSON_ARRAY}" >> $GITHUB_OUTPUT
+
       - name: Request OAuth Token
         id: get-token
-        uses: ./cicd-btp-insuite/.github/actions/get-token
-        with:
-          btp-api-user: ${{ inputs.btp-api-user }}
-          btp-tec-user: ${{ inputs.btp-tec-user }}
-          btp-token-url: ${{ inputs.btp-token-url }}
-          BTP_API_PASSWORD: ${{ secrets.BTP_API_PASSWORD }}
-          BTP_TEC_PASSWORD: ${{ secrets.BTP_TEC_PASSWORD }}
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            -u "${{ secrets.BTP_API_USER }}:${{ secrets.BTP_API_PASSWORD }}" \
+            -d "grant_type=password&username=${{ secrets.BTP_TEC_USER }}&password=${{ secrets.BTP_TEC_PASSWORD }}" \
+            https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token)
+          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Download Pid
-        if: ${{ inputs.mode == 'PartnerDirectory' }}
-        uses: ./cicd-btp-insuite/.github/actions/download-pid
-        with:
-          bearer-token: ${{ steps.get-token.outputs.token }}
-          partner-id: ${{ matrix.id }}
-          btp-api-url: ${{ inputs.btp-api-url }}
+      - name: Download IDs
+        run: |
+          TOKEN="${{ steps.get-token.outputs.token }}"
+          for ID in $(echo ${{ steps.parse-ids.outputs.ids-json }} | jq -r '.[]'); do
+            if [ "${{ github.event.inputs.mode }}" = "IntegrationPackages" ]; then
+              echo "Downloading package $ID..."
+              curl -s -H "Authorization: Bearer $TOKEN" \
+                "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com/api/v1/IntegrationPackages/$ID" \
+                -o "IntegrationPackages/${ID}.json"
+            else
+              echo "Downloading partner directory $ID..."
+              curl -s -H "Authorization: Bearer $TOKEN" \
+                "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com/api/v1/PartnerDirectory/$ID" \
+                -o "PartnerDirectory/${ID}.json"
+            fi
+          done
 
-      - name: Download Package
-        if: ${{ inputs.mode == 'IntegrationPackages' }}
-        uses: ./cicd-btp-insuite/.github/actions/download-package
-        with:
-          bearer-token: ${{ steps.get-token.outputs.token }}
-          package-id: ${{ matrix.id }}
-          btp-api-url: ${{ inputs.btp-api-url }}
- 
-      - name: GIT Commit
-        id: git-commit
-        uses: ./cicd-btp-insuite/.github/actions/git-commit
-        with:
-          comment: ${{ inputs.commit-message }}
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add IntegrationPackages PartnerDirectory || true
+          git commit -m "${{ github.event.inputs.commit-message }}" || echo "No changes to commit"
+          git push
