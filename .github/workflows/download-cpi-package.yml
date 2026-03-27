@@ -32,9 +32,9 @@ jobs:
         run: |
           RESPONSE=$(curl -s -X POST \
             -u "${{ secrets.BTP_API_USER }}:${{ secrets.BTP_API_PASSWORD }}" \
-            -d "grant_type=password&username=${{ secrets.BTP_TEC_USER }}&password=${{ secrets.BTP_TEC_PASSWORD }}" \
+            -d "grant_type=client_credentials" \
             https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token)
-          echo "Response: $RESPONSE"
+          echo "Token response: $RESPONSE"
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
@@ -44,11 +44,11 @@ jobs:
           for PACKAGE in $(echo "${{ github.event.inputs.packages }}" | tr ',' ' '); do
             echo "Fetching artifacts from package $PACKAGE..."
             ARTIFACTS=$(curl -s -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/json" \
               "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com/api/v1/IntegrationPackages('${PACKAGE}')/IntegrationDesigntimeArtifacts")
 
             echo "$ARTIFACTS" > "IntegrationPackages/${PACKAGE}_artifacts.json"
 
-            # Loop through each artifact and download its ZIP
             echo "$ARTIFACTS" | jq -c '.d.results[]' | while read -r artifact; do
               ID=$(echo $artifact | jq -r '.Id')
               NAME=$(echo $artifact | jq -r '.Name')
@@ -57,6 +57,7 @@ jobs:
               echo "Downloading artifact $NAME (Id=$ID, Version=$VERSION)..."
               mkdir -p "IntegrationPackages/${PACKAGE}"
               curl -s -H "Authorization: Bearer $TOKEN" \
+                -H "Accept: application/octet-stream" \
                 "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com/api/v1/IntegrationDesigntimeArtifacts('${ID}','${NAME}','${VERSION}')/\$value" \
                 -o "IntegrationPackages/${PACKAGE}/${NAME}_${VERSION}.zip"
             done
