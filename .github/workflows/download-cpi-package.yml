@@ -1,27 +1,18 @@
-name: Download MyiFlow
+name: SAP CPI Interface Change Fetch
 
 on:
   workflow_dispatch:
-    inputs:
-      commit-message:
-        description: "Commit message"
-        required: true
-        type: string
-
-permissions:
-  contents: write
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3 AM
 
 jobs:
-  download-myiflow:
+  fetch-changes:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: dev   # use the environment where secrets are stored
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GIT_CICD_TOKEN }}
-          ref: main
 
       - name: Get OAuth Token
         id: get_token
@@ -32,40 +23,19 @@ jobs:
             -d "grant_type=client_credentials" \
             "${{ secrets.CPI_TOKEN_URL }}")
 
-          echo "Raw token response: $RESPONSE"
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
-            echo "Failed to fetch token"
-            exit 1
-          fi
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Download MyiFlow
+      - name: Fetch Changed Interfaces
         run: |
-          TOKEN="${{ steps.get_token.outputs.token }}"
-
-          echo "Fetching metadata for MyiFlow..."
-          METADATA=$(curl -s -H "Authorization: Bearer $TOKEN" \
+          curl -s -X GET \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value" \
+            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
             -H "Accept: application/json" \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$filter=Name eq 'MyiFlow'")
+            -o changed_interfaces.json
 
-          echo "Metadata: $METADATA"
-
-          ID=$(echo $METADATA | jq -r '.d.results[0].Id')
-          NAME=$(echo $METADATA | jq -r '.d.results[0].Name')
-          VERSION=$(echo $METADATA | jq -r '.d.results[0].Version')
-
-          echo "Downloading artifact $NAME (Id=$ID, Version=$VERSION)..."
-          mkdir -p "IntegrationPackages/${NAME}"
-          curl -s -H "Authorization: Bearer $TOKEN" \
-            -H "Accept: application/octet-stream" \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('${ID}','${NAME}','${VERSION}')/\$value" \
-            -o "IntegrationPackages/${NAME}/${NAME}_${VERSION}.zip"
-
-      - name: Commit changes
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add IntegrationPackages || true
-          git commit -m "${{ github.event.inputs.commit-message }}" || echo "No changes to commit"
-          git push
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-interfaces
+          path: changed_interfaces.json
