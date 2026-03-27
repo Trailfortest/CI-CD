@@ -1,7 +1,10 @@
 name: Trigger CPI Download
 
 on:
-  workflow_dispatch:   # allows manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+permissions:
+  contents: write   # <-- add this
 
 jobs:
   call-download:
