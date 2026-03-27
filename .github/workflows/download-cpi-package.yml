@@ -1,14 +1,10 @@
-name: Download CPI Package into GIT
+name: Download CPI Interfaces
 
 on:
-  workflow_dispatch:   # trigger manually from Actions tab
+  workflow_dispatch:
     inputs:
-      ids:
-        description: "Comma-separated IDs"
-        required: true
-        type: string
-      mode:
-        description: "IntegrationPackages or PartnerDirectory"
+      packages:
+        description: "Comma-separated package names (e.g. test,POC)"
         required: true
         type: string
       commit-message:
@@ -31,19 +27,6 @@ jobs:
           token: ${{ secrets.GIT_CICD_TOKEN }}
           ref: main
 
-      - name: Parse IDs
-        id: parse-ids
-        run: |
-          IFS=',' read -ra IDS <<< "${{ github.event.inputs.ids }}"
-          JSON_ARRAY="["
-          for i in "${!IDS[@]}"; do
-            ID=$(echo "${IDS[$i]}" | xargs)
-            if [ $i -gt 0 ]; then JSON_ARRAY="${JSON_ARRAY},"; fi
-            JSON_ARRAY="${JSON_ARRAY}\"${ID}\""
-          done
-          JSON_ARRAY="${JSON_ARRAY}]"
-          echo "ids-json=${JSON_ARRAY}" >> $GITHUB_OUTPUT
-
       - name: Request OAuth Token
         id: get-token
         run: |
@@ -51,30 +34,38 @@ jobs:
             -u "${{ secrets.BTP_API_USER }}:${{ secrets.BTP_API_PASSWORD }}" \
             -d "grant_type=password&username=${{ secrets.BTP_TEC_USER }}&password=${{ secrets.BTP_TEC_PASSWORD }}" \
             https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token)
+          echo "Response: $RESPONSE"
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Download IDs
+      - name: Download Interfaces
         run: |
           TOKEN="${{ steps.get-token.outputs.token }}"
-          for ID in $(echo ${{ steps.parse-ids.outputs.ids-json }} | jq -r '.[]'); do
-            if [ "${{ github.event.inputs.mode }}" = "IntegrationPackages" ]; then
-              echo "Downloading package $ID..."
+          for PACKAGE in $(echo "${{ github.event.inputs.packages }}" | tr ',' ' '); do
+            echo "Fetching artifacts from package $PACKAGE..."
+            ARTIFACTS=$(curl -s -H "Authorization: Bearer $TOKEN" \
+              "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com/api/v1/IntegrationPackages('${PACKAGE}')/IntegrationDesigntimeArtifacts")
+
+            echo "$ARTIFACTS" > "IntegrationPackages/${PACKAGE}_artifacts.json"
+
+            # Loop through each artifact and download its ZIP
+            echo "$ARTIFACTS" | jq -c '.d.results[]' | while read -r artifact; do
+              ID=$(echo $artifact | jq -r '.Id')
+              NAME=$(echo $artifact | jq -r '.Name')
+              VERSION=$(echo $artifact | jq -r '.Version')
+
+              echo "Downloading artifact $NAME (Id=$ID, Version=$VERSION)..."
+              mkdir -p "IntegrationPackages/${PACKAGE}"
               curl -s -H "Authorization: Bearer $TOKEN" \
-                "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com/api/v1/IntegrationPackages/$ID" \
-                -o "IntegrationPackages/${ID}.json"
-            else
-              echo "Downloading partner directory $ID..."
-              curl -s -H "Authorization: Bearer $TOKEN" \
-                "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com/api/v1/PartnerDirectory/$ID" \
-                -o "PartnerDirectory/${ID}.json"
-            fi
+                "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com/api/v1/IntegrationDesigntimeArtifacts('${ID}','${NAME}','${VERSION}')/\$value" \
+                -o "IntegrationPackages/${PACKAGE}/${NAME}_${VERSION}.zip"
+            done
           done
 
       - name: Commit changes
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add IntegrationPackages PartnerDirectory || true
+          git add IntegrationPackages || true
           git commit -m "${{ github.event.inputs.commit-message }}" || echo "No changes to commit"
           git push
