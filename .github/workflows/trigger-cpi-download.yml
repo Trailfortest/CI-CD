@@ -1,0 +1,24 @@
+name: Trigger CPI Download
+
+on:
+  workflow_dispatch:   # allows manual trigger from GitHub Actions UI
+
+jobs:
+  call-download:
+    uses: Trailfortest/CI-CD/.github/workflows/download-cpi-package.yml@main
+    with:
+      workflow-ref: main
+      source-env: dev
+      target-ref: main
+      ids: test,POC
+      mode: IntegrationPackages   # or PartnerDirectory
+      commit-message: "Downloaded CPI packages in to github"
+      btp-api-user: "sb-1842f501-1670-4b45-bf38-74e901a14011!b109836|it!b196"
+      btp-tec-user: "likithsmail@gmail.com"
+      btp-token-url: "https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token"
+      btp-api-url: "https://bd9d77d2trial.it-cpitrial03.cfapps.ap21.hana.ondemand.com"
+      git-cicd-orgrepo: "Trailfortest/CI-CD"
+    secrets:
+      BTP_API_PASSWORD: ${{ secrets.BTP_API_PASSWORD }}
+      BTP_TEC_PASSWORD: ${{ secrets.BTP_TEC_PASSWORD }}
+      GIT_CICD_TOKEN: ${{ secrets.GIT_CICD_TOKEN }}
