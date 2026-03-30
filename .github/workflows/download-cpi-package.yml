@@ -67,7 +67,7 @@ jobs:
               mkdir -p "IntegrationPackages/${PACKAGE_ID}"
               curl -s -H "Authorization: Bearer $TOKEN" \
                 -H "Accept: application/octet-stream" \
-                "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts('${ID}','${NAME}','${VERSION}')/\$value" \
+                "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value" \
                 -o "IntegrationPackages/${PACKAGE_ID}/${NAME}_${VERSION}.zip"
             done
           done
