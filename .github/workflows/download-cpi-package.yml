@@ -1,106 +1,118 @@
-name: SAP CPI - Fetch Interfaces and Save to Repository
+name: SAP CPI - Fetch Interfaces and Save to CI-CD Folder
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:   # Run manually from GitHub Actions tab
   schedule:
-    - cron: "0 2 * * *"   # Daily at 2 AM
+    - cron: "0 2 * * *"   # OR auto-run daily at 2 AM
 
 jobs:
-  fetch-interfaces:
+  fetch-and-save-interfaces:
     runs-on: ubuntu-latest
-    environment: dev   # Use the environment where secrets are stored
+    environment: dev   # <-- Your GitHub environment where secrets are stored
 
     steps:
-      - name: Checkout Repository
+
+      # ──────────────────────────────────────────────────────
+      # STEP 1: Checkout the GitHub Repository
+      #         (So we can save files into it)
+      # ──────────────────────────────────────────────────────
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      # ─────────────────────────────────────────────
-      # STEP 1: Get OAuth Bearer Token
-      # ─────────────────────────────────────────────
-      - name: Get Bearer Token
+      # ──────────────────────────────────────────────────────
+      # STEP 2: Fetch Token using Client ID + Secret + Token URL
+      #         Extract only the access_token from the response
+      # ──────────────────────────────────────────────────────
+      - name: 🔑 Fetch OAuth Token
         id: get_token
         run: |
-          echo "Fetching OAuth token..."
-  
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+          echo "Calling Token URL to get Bearer Token..."
+
+          # Call the token URL using client_id and client_secret
+          TOKEN_RESPONSE=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
             -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials" \
-            "${{ secrets.CPI_TOKEN_URL }}")
-  
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-  
-          echo "Token endpoint HTTP status: $HTTP_CODE"
-  
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Failed to fetch token. HTTP Status: $HTTP_CODE"
-            echo "Response: $BODY"
-            exit 1
-          fi
-  
-          TOKEN=$(echo "$BODY" | jq -r '.access_token')
-  
-          if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
-            echo "Token is empty or null. Check your credentials."
-            exit 1
-          fi
-  
-          echo "Token fetched successfully."
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+            -d "grant_type=client_credentials")
 
-      # ─────────────────────────────────────────────
-      # STEP 2: Fetch Interfaces using Bearer Token
-      # ─────────────────────────────────────────────
-      - name: Fetch Interfaces
+          echo "Token Response received."
+
+          # Extract ONLY the access_token value from the response
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
+
+          # Validate the token
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+            echo "❌ Failed to extract token. Response was:"
+            echo "$TOKEN_RESPONSE"
+            exit 1
+          fi
+
+          echo "✅ Token fetched successfully."
+
+          # Save the token as output for next steps
+          echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
+
+      # ──────────────────────────────────────────────────────
+      # STEP 3: Use Bearer Token to Call API and Fetch Interfaces
+      # ──────────────────────────────────────────────────────
+      - name: 🌐 Fetch Interfaces from API
         id: fetch_interfaces
         run: |
-          echo "Fetching interfaces..."
-  
-          HTTP_CODE=$(curl -s -o interfaces.json -w "%{http_code}" -X GET \
-            "${{ secrets.CPI_HOST }}/v1/IntegrationDesigntimeArtifacts" \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+          echo "Calling API with Bearer Token to fetch interfaces..."
+
+          # Use the token from STEP 2 as Bearer Token in Authorization header
+          HTTP_STATUS=$(curl -s -o interfaces.json -w "%{http_code}" -X GET \
+            "${{ secrets.CPI_HOST }}" \
+            -H "Authorization: Bearer ${{ steps.get_token.outputs.access_token }}" \
             -H "Accept: application/json")
-  
-          echo "Fetch interfaces HTTP status: $HTTP_CODE"
-  
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Failed to fetch interfaces. HTTP Status: $HTTP_CODE"
+
+          echo "API Response HTTP Status: $HTTP_STATUS"
+
+          # Validate the API response
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ API call failed. HTTP Status: $HTTP_STATUS"
+            echo "Response body:"
+            cat interfaces.json
             exit 1
           fi
-  
-          echo "Interfaces fetched successfully."
 
-      # ─────────────────────────────────────────────
-      # STEP 3: Save Interfaces to Repository
-      # ─────────────────────────────────────────────
-      - name: Save Interfaces to Repository
-        run: |
-          echo "Saving interfaces..."
-  
-          # Create directory if it does not exist
-          mkdir -p cicd_folder/interfaces
-  
-          # Move the fetched interfaces JSON file to the CI/CD folder
-          mv interfaces.json cicd_folder/interfaces/
-          echo "Interfaces saved to cicd_folder/interfaces/."
+          echo "✅ Interfaces fetched successfully."
+          echo "Response preview:"
+          cat interfaces.json
 
-      # ─────────────────────────────────────────────
-      # STEP 4: Commit and Push Changes
-      # ─────────────────────────────────────────────
-      - name: Commit Changes
+      # ──────────────────────────────────────────────────────
+      # STEP 4: Save the Fetched Interfaces into CI-CD Folder
+      #         in the GitHub Repository
+      # ──────────────────────────────────────────────────────
+      - name: 💾 Save Interfaces to CI-CD Folder
         run: |
-          git config user.name "github-actions[bot]"
+          echo "Saving interfaces to CI-CD folder in the repository..."
+
+          # Create the CI-CD folder if it does not exist
+          mkdir -p cicd_folder
+
+          # Copy interfaces.json into the cicd_folder
+          cp interfaces.json cicd_folder/interfaces.json
+
+          echo "✅ File saved to cicd_folder/interfaces.json"
+          echo "Contents:"
+          ls -la cicd_folder/
+
+      # ──────────────────────────────────────────────────────
+      # STEP 5: Commit and Push the saved file back to GitHub
+      # ──────────────────────────────────────────────────────
+      - name: 📤 Commit and Push to GitHub Repository
+        run: |
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Add changes to commit
-          git add cicd_folder/interfaces/
+          # Stage the cicd_folder changes
+          git add cicd_folder/
 
-          # Check if there are changes to commit
+          # Check if there are actual changes to commit
           if git diff --cached --quiet; then
-            echo "No changes detected. Nothing to commit."
+            echo "ℹ️ No changes detected. The interfaces are already up to date."
           else
             git commit -m "chore: update interfaces - $(date +'%Y-%m-%d %H:%M:%S')"
             git push
-            echo "Changes committed and pushed successfully."
+            echo "✅ Interfaces committed and pushed to GitHub successfully."
           fi
