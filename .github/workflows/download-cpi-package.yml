@@ -61,7 +61,7 @@ jobs:
 
           # Use the token from STEP 2 as Bearer Token in Authorization header
           HTTP_STATUS=$(curl -s -o interfaces.json -w "%{http_code}" -X GET \
-            "${{ secrets.CPI_HOST }}" \
+            "${{ secrets.CPI_HOST }}"/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.access_token }}" \
             -H "Accept: application/json")
 
