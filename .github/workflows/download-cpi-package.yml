@@ -1,118 +1,123 @@
-name: SAP CPI - Fetch Interfaces and Save to CI-CD Folder
+name: SAP CPI Interface Change Fetch
 
 on:
-  workflow_dispatch:   # Run manually from GitHub Actions tab
+  workflow_dispatch:
   schedule:
-    - cron: "0 2 * * *"   # OR auto-run daily at 2 AM
+    - cron: "0 3 * * *"   # daily at 3 AM
 
 jobs:
-  fetch-and-save-interfaces:
+  fetch-changes:
     runs-on: ubuntu-latest
-    environment: dev   # <-- Your GitHub environment where secrets are stored
+    environment: dev   # use the environment where secrets are stored
 
     steps:
-
-      # ──────────────────────────────────────────────────────
-      # STEP 1: Checkout the GitHub Repository
-      #         (So we can save files into it)
-      # ──────────────────────────────────────────────────────
-      - name: 📥 Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ──────────────────────────────────────────────────────
-      # STEP 2: Fetch Token using Client ID + Secret + Token URL
-      #         Extract only the access_token from the response
-      # ──────────────────────────────────────────────────────
-      - name: 🔑 Fetch OAuth Token
+      - name: Get OAuth Token
         id: get_token
         run: |
-          echo "Calling Token URL to get Bearer Token..."
-
-          # Call the token URL using client_id and client_secret
-          TOKEN_RESPONSE=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
+          RESPONSE=$(curl -s -X POST \
             -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials")
+            -d "grant_type=client_credentials" \
+            "${{ secrets.CPI_TOKEN_URL }}")
 
-          echo "Token Response received."
+          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-          # Extract ONLY the access_token value from the response
-          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
-
-          # Validate the token
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
-            echo "❌ Failed to extract token. Response was:"
-            echo "$TOKEN_RESPONSE"
-            exit 1
-          fi
-
-          echo "✅ Token fetched successfully."
-
-          # Save the token as output for next steps
-          echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
-
-      # ──────────────────────────────────────────────────────
-      # STEP 3: Use Bearer Token to Call API and Fetch Interfaces
-      # ──────────────────────────────────────────────────────
-      - name: 🌐 Fetch Interfaces from API
-        id: fetch_interfaces
+      - name: Fetch Changed Interfaces
         run: |
-          echo "Calling API with Bearer Token to fetch interfaces..."
+          curl -s -X GET \
+            "${{ secrets.CPI_HOST }}/name: SAP CPI Interface Change Fetch
 
-          # Use the token from STEP 2 as Bearer Token in Authorization header
-          HTTP_STATUS=$(curl -s -o interfaces.json -w "%{http_code}" -X GET \
-            "${{ secrets.CPI_HOST }}"/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.access_token }}" \
-            -H "Accept: application/json")
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3 AM
 
-          echo "API Response HTTP Status: $HTTP_STATUS"
+jobs:
+  fetch-changes:
+    runs-on: ubuntu-latest
+    environment: dev   # use the environment where secrets are stored
 
-          # Validate the API response
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "❌ API call failed. HTTP Status: $HTTP_STATUS"
-            echo "Response body:"
-            cat interfaces.json
-            exit 1
-          fi
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-          echo "✅ Interfaces fetched successfully."
-          echo "Response preview:"
-          cat interfaces.json
-
-      # ──────────────────────────────────────────────────────
-      # STEP 4: Save the Fetched Interfaces into CI-CD Folder
-      #         in the GitHub Repository
-      # ──────────────────────────────────────────────────────
-      - name: 💾 Save Interfaces to CI-CD Folder
+      - name: Get OAuth Token
+        id: get_token
         run: |
-          echo "Saving interfaces to CI-CD folder in the repository..."
+          RESPONSE=$(curl -s -X POST \
+            -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials" \
+            "${{ secrets.CPI_TOKEN_URL }}")
 
-          # Create the CI-CD folder if it does not exist
-          mkdir -p cicd_folder
+          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-          # Copy interfaces.json into the cicd_folder
-          cp interfaces.json cicd_folder/interfaces.json
-
-          echo "✅ File saved to cicd_folder/interfaces.json"
-          echo "Contents:"
-          ls -la cicd_folder/
-
-      # ──────────────────────────────────────────────────────
-      # STEP 5: Commit and Push the saved file back to GitHub
-      # ──────────────────────────────────────────────────────
-      - name: 📤 Commit and Push to GitHub Repository
+      - name: Fetch Changed Interfaces
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          curl -s -X GET \
+            "${{ secrets.CPI_HOST }}/name: SAP CPI Interface Change Fetch
 
-          # Stage the cicd_folder changes
-          git add cicd_folder/
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3 AM
 
-          # Check if there are actual changes to commit
-          if git diff --cached --quiet; then
-            echo "ℹ️ No changes detected. The interfaces are already up to date."
-          else
-            git commit -m "chore: update interfaces - $(date +'%Y-%m-%d %H:%M:%S')"
-            git push
-            echo "✅ Interfaces committed and pushed to GitHub successfully."
-          fi
+jobs:
+  fetch-changes:
+    runs-on: ubuntu-latest
+    environment: dev   # use the environment where secrets are stored
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get OAuth Token
+        id: get_token
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials" \
+            "${{ secrets.CPI_TOKEN_URL }}")
+
+          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Fetch Changed Interfaces
+        run: |
+          curl -s -X GET \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value \
+            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+            -H "Accept: application/json" \
+            -o changed_interfaces.json
+
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-interfaces
+          path: changed_interfaces.json
+ \
+            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+            -H "Accept: application/json" \
+            -o changed_interfaces.json
+
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-interfaces
+          path: changed_interfaces.json
+ \
+            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+            -H "Accept: application/json" \
+            -o changed_interfaces.json
+
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-interfaces
+          path: changed_interfaces.json
