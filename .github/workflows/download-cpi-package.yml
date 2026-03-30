@@ -1,187 +1,106 @@
-name: SAP CPI - Fetch MyiFlow Active Version
+name: SAP CPI - Fetch Interfaces and Save to Repository
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"   # daily at 3 AM
+    - cron: "0 2 * * *"   # Daily at 2 AM
 
 jobs:
-  fetch-myiflow:
+  fetch-interfaces:
     runs-on: ubuntu-latest
-    environment: dev   # use the environment where secrets are stored
+    environment: dev   # Use the environment where secrets are stored
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       # ─────────────────────────────────────────────
-      # STEP 1: Get OAuth Token
+      # STEP 1: Get OAuth Bearer Token
       # ─────────────────────────────────────────────
-      - name: Get OAuth Token
+      - name: Get Bearer Token
         id: get_token
         run: |
           echo "Fetching OAuth token..."
-
+  
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials" \
             "${{ secrets.CPI_TOKEN_URL }}")
-
+  
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-
+  
           echo "Token endpoint HTTP status: $HTTP_CODE"
-
+  
           if [ "$HTTP_CODE" != "200" ]; then
             echo "Failed to fetch token. HTTP Status: $HTTP_CODE"
             echo "Response: $BODY"
             exit 1
           fi
-
+  
           TOKEN=$(echo "$BODY" | jq -r '.access_token')
-
+  
           if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
             echo "Token is empty or null. Check your credentials."
             exit 1
           fi
-
+  
           echo "Token fetched successfully."
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
       # ─────────────────────────────────────────────
-      # STEP 2: Fetch MyiFlow Metadata
+      # STEP 2: Fetch Interfaces using Bearer Token
       # ─────────────────────────────────────────────
-      - name: Fetch MyiFlow Metadata
-        id: fetch_metadata
+      - name: Fetch Interfaces
+        id: fetch_interfaces
         run: |
-          echo "Fetching MyiFlow metadata..."
-
-          HTTP_CODE=$(curl -s -o myiflow_versions.json -w "%{http_code}" -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts?\$filter=Id%20eq%20'MyiFlow'&\$format=json" \
+          echo "Fetching interfaces..."
+  
+          HTTP_CODE=$(curl -s -o interfaces.json -w "%{http_code}" -X GET \
+            "${{ secrets.CPI_HOST }}/v1/IntegrationDesigntimeArtifacts" \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
             -H "Accept: application/json")
-
-          echo "Metadata endpoint HTTP status: $HTTP_CODE"
-
-          # ── Validate HTTP response ──
+  
+          echo "Fetch interfaces HTTP status: $HTTP_CODE"
+  
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "Failed to fetch MyiFlow metadata. HTTP Status: $HTTP_CODE"
-            cat myiflow_versions.json
+            echo "Failed to fetch interfaces. HTTP Status: $HTTP_CODE"
             exit 1
           fi
-
-          # ── Validate file exists ──
-          if [ ! -f myiflow_versions.json ]; then
-            echo "myiflow_versions.json was not created."
-            exit 1
-          fi
-
-          echo "Raw API Response:"
-          cat myiflow_versions.json
-
-          # ── Extract Version from OData response ──
-          # SAP OData response structure: .d.results[0].Version
-          ACTIVE_VERSION=$(jq -r '.d.results[0].Version // empty' myiflow_versions.json)
-
-          # Fallback: try flat array structure
-          if [ -z "$ACTIVE_VERSION" ]; then
-            ACTIVE_VERSION=$(jq -r '.[0].Version // empty' myiflow_versions.json)
-          fi
-
-          # Fallback: try root object
-          if [ -z "$ACTIVE_VERSION" ]; then
-            ACTIVE_VERSION=$(jq -r '.Version // empty' myiflow_versions.json)
-          fi
-
-          if [ -z "$ACTIVE_VERSION" ]; then
-            echo "Could not extract version from response. Check the raw response above."
-            exit 1
-          fi
-
-          echo "Version found: $ACTIVE_VERSION"
-          echo "active_version=$ACTIVE_VERSION" >> $GITHUB_OUTPUT
+  
+          echo "Interfaces fetched successfully."
 
       # ─────────────────────────────────────────────
-      # STEP 3: Download MyiFlow ZIP Content
+      # STEP 3: Save Interfaces to Repository
       # ─────────────────────────────────────────────
-      - name: Download MyiFlow ZIP
-        id: download_zip
+      - name: Save Interfaces to Repository
         run: |
-          VERSION="${{ steps.fetch_metadata.outputs.active_version }}"
-          echo "Downloading MyiFlow version: $VERSION"
-
-          HTTP_CODE=$(curl -s -o "MyiFlow-${VERSION}.zip" -w "%{http_code}" -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='${VERSION}')/\$value" \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}")
-
-          echo "Download endpoint HTTP status: $HTTP_CODE"
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Failed to download MyiFlow ZIP. HTTP Status: $HTTP_CODE"
-            exit 1
-          fi
-
-          # ── Validate ZIP file ──
-          if [ ! -f "MyiFlow-${VERSION}.zip" ]; then
-            echo "ZIP file was not created."
-            exit 1
-          fi
-
-          FILE_SIZE=$(stat -c%s "MyiFlow-${VERSION}.zip")
-          echo "Downloaded ZIP size: $FILE_SIZE bytes"
-
-          if [ "$FILE_SIZE" -lt 100 ]; then
-            echo "ZIP file seems too small. It may be an error response."
-            cat "MyiFlow-${VERSION}.zip"
-            exit 1
-          fi
-
-          echo "MyiFlow-${VERSION}.zip downloaded successfully."
+          echo "Saving interfaces..."
+  
+          # Create directory if it does not exist
+          mkdir -p cicd_folder/interfaces
+  
+          # Move the fetched interfaces JSON file to the CI/CD folder
+          mv interfaces.json cicd_folder/interfaces/
+          echo "Interfaces saved to cicd_folder/interfaces/."
 
       # ─────────────────────────────────────────────
-      # STEP 4: Unzip and Commit to Repository
+      # STEP 4: Commit and Push Changes
       # ─────────────────────────────────────────────
-      - name: Unzip and Save to Repo
+      - name: Commit Changes
         run: |
-          VERSION="${{ steps.fetch_metadata.outputs.active_version }}"
-
-          # Create output directory
-          mkdir -p interfaces/MyiFlow
-
-          # Unzip the downloaded file
-          unzip -o "MyiFlow-${VERSION}.zip" -d "interfaces/MyiFlow/"
-
-          echo "Unzipped contents:"
-          ls -la interfaces/MyiFlow/
-
-      # ─────────────────────────────────────────────
-      # STEP 5: Commit Changes to GitHub
-      # ─────────────────────────────────────────────
-      - name: Commit and Push to GitHub
-        run: |
-          VERSION="${{ steps.fetch_metadata.outputs.active_version }}"
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add interfaces/MyiFlow/
+          # Add changes to commit
+          git add cicd_folder/interfaces/
 
-          # Only commit if there are changes
+          # Check if there are changes to commit
           if git diff --cached --quiet; then
             echo "No changes detected. Nothing to commit."
           else
-            git commit -m "chore: update MyiFlow version ${VERSION} - $(date +'%Y-%m-%d %H:%M:%S')"
+            git commit -m "chore: update interfaces - $(date +'%Y-%m-%d %H:%M:%S')"
             git push
             echo "Changes committed and pushed successfully."
           fi
-
-      # ─────────────────────────────────────────────
-      # STEP 6: Upload ZIP as GitHub Artifact (optional backup)
-      # ─────────────────────────────────────────────
-      - name: Upload ZIP as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MyiFlow-${{ steps.fetch_metadata.outputs.active_version }}
-          path: MyiFlow-${{ steps.fetch_metadata.outputs.active_version }}.zip
-          retention-days: 7
