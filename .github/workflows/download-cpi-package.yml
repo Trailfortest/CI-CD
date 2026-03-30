@@ -8,116 +8,87 @@ on:
 jobs:
   fetch-changes:
     runs-on: ubuntu-latest
-    environment: dev   # use the environment where secrets are stored
+    environment: dev
 
     steps:
+
+      # ─────────────────────────────────────────────
+      # STEP 1: Checkout Repository
+      # ─────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ─────────────────────────────────────────────
+      # STEP 2: Get OAuth Token
+      # ─────────────────────────────────────────────
       - name: Get OAuth Token
         id: get_token
         run: |
+          echo "Fetching OAuth token..."
+
           RESPONSE=$(curl -s -X POST \
             -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials" \
             "${{ secrets.CPI_TOKEN_URL }}")
 
-          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+          # Extract access_token from response
+          TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+
+          # ✅ Validate the token
+          if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
+            echo "❌ Failed to fetch token. Response was:"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+          echo "✅ Token fetched successfully."
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
+      # ─────────────────────────────────────────────
+      # STEP 3: Fetch Interfaces using Bearer Token
+      # ─────────────────────────────────────────────
       - name: Fetch Changed Interfaces
         run: |
-          curl -s -X GET \
-            "${{ secrets.CPI_HOST }}/name: SAP CPI Interface Change Fetch
+          echo "Calling API to fetch interfaces..."
 
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * *"   # daily at 3 AM
-
-jobs:
-  fetch-changes:
-    runs-on: ubuntu-latest
-    environment: dev   # use the environment where secrets are stored
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Get OAuth Token
-        id: get_token
-        run: |
-          RESPONSE=$(curl -s -X POST \
-            -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials" \
-            "${{ secrets.CPI_TOKEN_URL }}")
-
-          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
-
-      - name: Fetch Changed Interfaces
-        run: |
-          curl -s -X GET \
-            "${{ secrets.CPI_HOST }}/name: SAP CPI Interface Change Fetch
-
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * *"   # daily at 3 AM
-
-jobs:
-  fetch-changes:
-    runs-on: ubuntu-latest
-    environment: dev   # use the environment where secrets are stored
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Get OAuth Token
-        id: get_token
-        run: |
-          RESPONSE=$(curl -s -X POST \
-            -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials" \
-            "${{ secrets.CPI_TOKEN_URL }}")
-
-          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
-
-      - name: Fetch Changed Interfaces
-        run: |
-          curl -s -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value \
+          # ✅ Fixed URL with proper quotes and escaped $value
+          # ✅ Capture HTTP status code separately
+          HTTP_STATUS=$(curl -s -o changed_interfaces.json -w "%{http_code}" -X GET \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value" \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -H "Accept: application/json" \
-            -o changed_interfaces.json
+            -H "Accept: application/json")
 
-      - name: Upload Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: changed-interfaces
-          path: changed_interfaces.json
- \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -H "Accept: application/json" \
-            -o changed_interfaces.json
+          echo "API HTTP Status: $HTTP_STATUS"
 
-      - name: Upload Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: changed-interfaces
-          path: changed_interfaces.json
- \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -H "Accept: application/json" \
-            -o changed_interfaces.json
+          # ✅ Fail if API did not return 200
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ API call failed. HTTP Status: $HTTP_STATUS"
+            echo "Response:"
+            cat changed_interfaces.json
+            exit 1
+          fi
 
-      - name: Upload Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: changed-interfaces
-          path: changed_interfaces.json
+          echo "✅ Interfaces fetched successfully."
+          cat changed_interfaces.json
+
+      # ─────────────────────────────────────────────
+      # STEP 4: Save to CI-CD folder in Repo
+      # ─────────────────────────────────────────────
+      - name: Save to CI-CD Folder
+        run: |
+          mkdir -p cicd_folder
+          cp changed_interfaces.json cicd_folder/changed_interfaces.json
+          echo "✅ Saved to cicd_folder/changed_interfaces.json"
+
+      # ─────────────────────────────────────────────
+      # STEP 5: Commit and Push to GitHub
+      # ─────────────────────────────────────────────
+      - name: Commit and Push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add cicd_folder/
+
+          if*
