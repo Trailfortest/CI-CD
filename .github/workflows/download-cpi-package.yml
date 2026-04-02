@@ -1,94 +1,164 @@
-name: SAP CPI Interface Change Fetch
+# Copyright (c) 2025 Mercedes-Benz AG
+# Frank Sprünken <accenture.spruenken@extaccount.com>
+#
+# Version History:
+# 1.0.0 - 2025-11-24 - Initial release (F. Spruenken)
+# 1.0.1 - 2026-01-26 - Introduce environment variable RUNS_ON (O. Weng)
+#
+name: Download CPI Package into GIT
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * *"   # daily at 3 AM
+  workflow_call:
+    inputs:
+      workflow-ref:
+        description: "GIT Reference Workflow should run in"
+        required: true
+        type: string
+      source-env:
+        description: "Source Environment"
+        required: true
+        type: string
+      target-ref:
+        description: "GIT Target Reference"
+        required: true
+        type: string
+      ids:
+        description: "IDs (1..n) to be downloaded"
+        required: true
+        type: string
+      mode:
+        description: "Mode IntegrationPackages/PartnerDirectory"
+        required: true
+        type: string
+      commit-message:
+        description: "Commit Message"
+        required: true
+        type: string
+      btp-api-user:
+        description: "BTP Service Key (ClientID) to access Token Endpoint"
+        required: true
+        type: string
+      btp-tec-user:
+        description: "BTP technical User with Access Policy for Integration Suite"
+        required: true
+        type: string
+      btp-token-url:
+        description: "URL on BTP to request Token"
+        required: true
+        type: string
+      btp-api-url:
+        description: "URL on BTP to access APIs"
+        required: true
+        type: string
+      git-cicd-orgrepo:
+        description: "Remote GIT Org/Repo for CICD"
+        required: true
+        type: string
+        
+    secrets:
+      BTP_API_PASSWORD:
+        description: "Client Secret for API User"
+        required: true  
+      BTP_TEC_PASSWORD:
+        description: "Passsword of technical User"
+        required: true
+      GIT_CICD_TOKEN:
+        description: "GIT Token of remote CICD Repo"
+        required: true
+          
+permissions:
+  contents: write
 
 jobs:
-  fetch-changes:
-    runs-on: ubuntu-latest
-    environment: dev
+  preparation:
+    name: Prepare ${{ inputs.mode }} ID(s) 
+    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
+    environment: ${{ inputs.source-env }}
+    outputs:
+      ids-json: ${{ steps.parse-ids.outputs.ids-json }}		
 
     steps:
+      - name: Parse IDs
+        id: parse-ids
+        run: |
+          # Convert comma-separated string to JSON array
+          IFS=',' read -ra IDS <<< "${{ inputs.ids }}"
+          JSON_ARRAY="["
+          for i in "${!IDS[@]}"; do
+          # Trim whitespace
+          ID=$(echo "${IDS[$i]}" | xargs)
+          if [ $i -gt 0 ]; then
+          JSON_ARRAY="${JSON_ARRAY},"
+          fi
+          JSON_ARRAY="${JSON_ARRAY}\"${ID}\""
+          done
+          JSON_ARRAY="${JSON_ARRAY}]"
+          echo "ids-json=${JSON_ARRAY}" >> $GITHUB_OUTPUT
+          
+          cat $GITHUB_OUTPUT
 
-      # ─────────────────────────────────────────────
-      # STEP 1: Checkout Repository
-      # ─────────────────────────────────────────────
-      - name: Checkout
+  download-id:
+    needs: preparation
+    name: ${{ matrix.id }}
+    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
+    environment: ${{ inputs.source-env }}
+    strategy:
+      max-parallel: 1
+      matrix:
+        id: ${{ fromJson(needs.preparation.outputs.ids-json) }}
+
+    steps:
+      - name: Checkout cicd-actions-intsuite repo
         uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.git-cicd-orgrepo }}
+          path: cicd-btp-insuite
+          token: ${{ secrets.GIT_CICD_TOKEN }}
+          ref: ${{ inputs.workflow-ref }}
 
-      # ─────────────────────────────────────────────
-      # STEP 2: Get OAuth Token
-      # ─────────────────────────────────────────────
-      - name: Get OAuth Token
-        id: get_token
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target-ref }}
+          path: btp-insuite
+
+      - name: Check dir ${{ inputs.mode }}
         run: |
-          echo "Fetching OAuth token..."
-
-          RESPONSE=$(curl -s -X POST \
-            -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials" \
-            "${{ secrets.CPI_TOKEN_URL }}")
-
-          # Extract access_token from response
-          TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
-
-          # ✅ Validate the token
-          if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
-            echo "❌ Failed to fetch token. Response was:"
-            echo "$RESPONSE"
-            exit 1
+          if [ ! -d "btp-insuite/${{ inputs.mode }}" ]; then
+            echo "🚫 Directory btp-insuite/${{ inputs.mode }} not found. Creating it..."
+            mkdir -p btp-insuite/${{ inputs.mode }}
+          else
+            echo "✅ Directory btp-insuite/${{ inputs.mode }} found." 
           fi
+     
+      - name: Request OAuth Token
+        id: get-token
+        uses: ./cicd-btp-insuite/.github/actions/get-token
+        with:
+          btp-api-user: ${{ inputs.btp-api-user }}
+          btp-tec-user: ${{ inputs.btp-tec-user }}
+          btp-token-url: ${{ inputs.btp-token-url }}
+          BTP_API_PASSWORD: ${{ secrets.BTP_API_PASSWORD }}
+          BTP_TEC_PASSWORD: ${{ secrets.BTP_TEC_PASSWORD }}
 
-          echo "✅ Token fetched successfully."
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+      - name: Download Pid
+        if: ${{ inputs.mode == 'PartnerDirectory' }}
+        uses: ./cicd-btp-insuite/.github/actions/download-pid
+        with:
+          bearer-token: ${{ steps.get-token.outputs.token }}
+          partner-id: ${{ matrix.id }}
+          btp-api-url: ${{ inputs.btp-api-url }}
 
-      # ─────────────────────────────────────────────
-      # STEP 3: Fetch Interfaces using Bearer Token
-      # ─────────────────────────────────────────────
-      - name: Fetch Changed Interfaces
-        run: |
-          echo "Calling API to fetch interfaces..."
-
-          # ✅ Fixed URL with proper quotes and escaped $value
-          # ✅ Capture HTTP status code separately
-          HTTP_STATUS=$(curl -s -o changed_interfaces.json -w "%{http_code}" -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value" \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -H "Accept: application/json")
-
-          echo "API HTTP Status: $HTTP_STATUS"
-
-          # ✅ Fail if API did not return 200
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "❌ API call failed. HTTP Status: $HTTP_STATUS"
-            echo "Response:"
-            cat changed_interfaces.json
-            exit 1
-          fi
-
-          echo "✅ Interfaces fetched successfully."
-          cat changed_interfaces.json
-
-      # ─────────────────────────────────────────────
-      # STEP 4: Save to CI-CD folder in Repo
-      # ─────────────────────────────────────────────
-      - name: Save to CI-CD Folder
-        run: |
-          mkdir -p cicd_folder
-          cp changed_interfaces.json cicd_folder/changed_interfaces.json
-          echo "✅ Saved to cicd_folder/changed_interfaces.json"
-
-      # ─────────────────────────────────────────────
-      # STEP 5: Commit and Push to GitHub
-      # ─────────────────────────────────────────────
-      - name: Commit and Push
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add cicd_folder/
-
-          if*
+      - name: Download Package
+        if: ${{ inputs.mode == 'IntegrationPackages' }}
+        uses: ./cicd-btp-insuite/.github/actions/download-package
+        with:
+          bearer-token: ${{ steps.get-token.outputs.token }}
+          package-id: ${{ matrix.id }}
+          btp-api-url: ${{ inputs.btp-api-url }}
+ 
+      - name: GIT Commit
+        id: git-commit
+        uses: ./cicd-btp-insuite/.github/actions/git-commit
+        with:
+          comment: ${{ inputs.commit-message }}
