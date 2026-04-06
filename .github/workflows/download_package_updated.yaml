@@ -1,0 +1,59 @@
+name: SAP CPI Interface Change Fetch
+ 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3 AM
+ 
+jobs:
+  fetch-changes:
+    runs-on: ubuntu-latest 
+    environment: dev   # use the environment where secrets are stored
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+ 
+      - name: Get OAuth Token
+        id: get_token
+        shell: bash
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "${{ secrets.CPI_TOKEN_URL }} \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "grant_type=client_credentials" \
+            --data-urlencode "client_id=${{ secrets.CPI_CLIENT_ID }}" \
+            --data-urlencode "client_secret=${{ secrets.CPI_CLIENT_SECRET }}")
+          echo "Raw Response: $RESPONSE"
+
+          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+          
+          if [[ -z "$TOKEN"]]; then
+            echo "ERROR: Token fetch failed"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          echo "Token fetched successfully"
+ 
+      - name: Fetch Changed Interfaces
+        shell: bash
+        run: |
+          HTTP_STATUS=$(curl -s \
+            -o changed_interfaces.json \
+            -w "%{http_code}" \
+            -X GET \
+            "${{ secrets.CPI_HOST }}api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+            -H "Accept: application/json" \
+          echo "HTTP Status: $HTTP_STATUS" 
+          cat changed_interfaces.json | jq . || cat changed_interfaces.json
+      - name: Debug Response
+        run: cat changed_interfaces.json
+ 
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-interfaces
+          path: changed_interfaces.json
