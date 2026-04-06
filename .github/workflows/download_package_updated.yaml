@@ -32,15 +32,6 @@ jobs:
           echo "Raw Response: $RESPONSE"
 
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-###          
-          if [[ -z "$TOKEN"]]; then
-            echo "ERROR: Token fetch failed"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
-          echo "Token fetched successfully"
- ###
       - name: Fetch Changed Interfaces
         shell: bash
         run: |
