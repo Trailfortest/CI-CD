@@ -25,7 +25,11 @@ jobs:
 
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
-
+          
+      - name: Read Token
+        run: |
+          echo "Token is:"
+          echo "${{ steps.get_token.outputs.token }}"
       - name: Fetch Changed Interfaces
         run: |
           curl -s -X GET \
