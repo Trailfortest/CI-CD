@@ -48,12 +48,12 @@ jobs:
           echo "Token length: ${#TOKEN}"
 
           HTTP_STATUS=$(curl -s \
-            -o changed_interfaces.json \
+            -o changed_interfaces.zip \
             -w "%{http_code}" \
             -X GET \
             "${CPI_HOST}api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value" \
             -H "Authorization: Bearer ${TOKEN}" \
-            -H "Accept: application/json")
+            -H "Accept: application/zip")
 
           echo "HTTP Status: $HTTP_STATUS" 
           cat changed_interfaces.json | jq . || cat changed_interfaces.json
