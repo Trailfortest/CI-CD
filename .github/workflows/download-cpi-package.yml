@@ -3,32 +3,27 @@ name: SAP CPI Interface Change Fetch
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"   # Daily at 3 AM
+    - cron: "0 3 * * *"
 
 jobs:
   fetch-changes:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: dev   # 
     timeout-minutes: 10
 
     steps:
-      # 1️⃣ Checkout repo
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2️⃣ Install jq
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      # 3️⃣ Get OAuth Token 
       - name: Get OAuth Token
         id: get_token
         run: |
           echo "Fetching OAuth token..."
 
-          RESPONSE=$(curl -s \
-            --connect-timeout 10 --max-time 60 \
-            -X POST \
+          RESPONSE=$(curl -s -X POST \
             -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials" \
@@ -44,6 +39,4 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Token fetched"
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
- 
