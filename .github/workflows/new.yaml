@@ -1,0 +1,67 @@
+name: SAP CPI Interface Change Fetch
+ 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3 AM
+ 
+jobs:
+  fetch-changes:
+    runs-on: ubuntu-latest 
+    environment: dev   # use the environment where secrets are stored
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
+      CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
+      CPI_TOKEN_URL: ${{ secrets.CPI_TOKEN_URL }}
+      CPI_HOST: ${{ secrets.CPI_HOST }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get OAuth Token
+        id: get_token
+        shell: bash
+        run: |
+          BODY=$(curl -s -X POST \
+            "${CPI_TOKEN_URL}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials" \
+            -d "client_id=${CPI_CLIENT_ID}" \
+            -d "client_secret=${CPI_CLIENT_SECRET}")
+          echo "Body: ${BODY}"
+
+          TOKEN=$(printf '%s' "${BODY}" | jq -r '.access_token // empty' 2>/dev/null || true)
+          
+          if [ "${#TOKEN}" -lt 10 ]; then
+            echo "ERROR: Token is empty or too short"
+            exit 1
+          fi
+
+          printf '%s' "${TOKEN}" > /tmp/cpi_token.txt 
+          echo "Token saved successfully, length: ${#TOKEN}"
+      - name: Fetch Changed Interfaces
+        shell: bash
+        run: |
+          TOKEN=$(cat /tmp/cpi_token.txt)
+
+          echo "Token length: ${#TOKEN}"
+
+          HTTP_STATUS=$(curl -s \
+            -o changed_interfaces.json \
+            -w "%{http_code}" \
+            -X GET \
+            "${CPI_HOST}api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/json")
+
+          echo "HTTP Status: $HTTP_STATUS" 
+          cat changed_interfaces.json | jq . || cat changed_interfaces.json
+      - name: Debug Response
+        run: cat changed_interfaces.json
+ 
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-interfaces
+          path: changed_interfaces.json
