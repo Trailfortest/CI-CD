@@ -24,7 +24,7 @@ jobs:
       
           RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
             "https://bd9d77d2trial.authentication.ap21.hana.ondemand.com/oauth/token" \
-            -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
+            -u "sb-1842f501-1670-4b45-bf38-74e901a14011!b109836|it!b196:b1c13681-861b-4aea-9ea9-689f1b388916$YSQErQxdWiw2FRC84YMtfm6KwUOvho1bI82QrReSf8U=" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials")
       
