@@ -35,13 +35,18 @@ jobs:
       - name: Fetch Changed Interfaces
         shell: bash
         run: |
+          TOKEN=$(cat /tmp/cpi_token.txt)
+
+          echo "Token length: ${#TOKEN}"
+
           HTTP_STATUS=$(curl -s \
             -o changed_interfaces.json \
             -w "%{http_code}" \
             -X GET \
-            "${{ secrets.CPI_HOST }}api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
-            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
-            -H "Accept: application/json" \
+            "${CPI_HOST}api/v1/IntegrationDesigntimeArtifacts?\$format=json" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/json")
+            
           echo "HTTP Status: $HTTP_STATUS" 
           cat changed_interfaces.json | jq . || cat changed_interfaces.json
       - name: Debug Response
