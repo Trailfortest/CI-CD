@@ -53,22 +53,15 @@ jobs:
             -X GET \
             "${CPI_HOST}api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value" \
             -H "Authorization: Bearer ${TOKEN}" \
-            -H "Accept: application/zip")
+            -H "Accept: application/json")
 
-          echo "HTTP Status: $HTTP_STATUS"
-
-          file changed_interfaces.zip
-          mkdir -p extracted_interfaces
-          unzip -o changed_interfaces.zip -d extracted_interfaces/
-
-          echo "Extracted contents:"
-          ls -la extracted_interfaces/
-          
+          echo "HTTP Status: $HTTP_STATUS" 
+          cat changed_interfaces.json | jq . || cat changed_interfaces.json
       - name: Debug Response
-        run: ls -la extracted_interfaces/
+        run: cat changed_interfaces.json
  
       - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
           name: changed-interfaces
-          path: extracted_interfaces/          
+          path: changed_interfaces.json     
