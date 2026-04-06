@@ -23,6 +23,7 @@ jobs:
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials" \
             "${{ secrets.CPI_TOKEN_URL }}")
+          echo $RESPONSE
  
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
           if [ -z "$TOKEN"] || [ "$TOKEN" == "null" ]; then
