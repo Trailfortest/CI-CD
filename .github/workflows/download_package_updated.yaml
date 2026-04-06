@@ -24,7 +24,7 @@ jobs:
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "grant_type=client_credentials" \
             --data-urlencode "client_id=${{ secrets.CPI_CLIENT_ID }}" \
-            --data-urlencode "client_secret=${{ secrets.CPI_CLIENT_SECRET }}")
+            --data-urlencode "client_secret=${{ secrets.CPI_CLIENT_SECRET }}" )
           echo "Raw Response: $RESPONSE"
 
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
