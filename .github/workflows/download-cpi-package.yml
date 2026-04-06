@@ -25,7 +25,7 @@ jobs:
             "${{ secrets.CPI_TOKEN_URL }}")
  
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
-          if [ -z "$TOKEN"] || [ "$TOKEN" = "null" ]; then
+          if [ -z "$TOKEN"] || [ "$TOKEN" == "null" ]; then
             echo "Token fetch failed: $RESPONSE"
             exit 1
           fi
