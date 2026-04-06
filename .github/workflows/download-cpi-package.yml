@@ -3,43 +3,93 @@ name: SAP CPI Interface Change Fetch
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"   # daily at 3 AM
+    - cron: "0 3 * * *"
 
 jobs:
   fetch-changes:
     runs-on: ubuntu-latest
-   
+    timeout-minutes: 10   # prevents hanging
 
     steps:
+      # 1️⃣ Checkout
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 2️⃣ Install jq
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # 3️⃣ Get OAuth Token (FINAL FIXED VERSION)
       - name: Get OAuth Token
         id: get_token
         run: |
+          echo "Fetching OAuth token..."
+
           RESPONSE=$(curl -s -X POST \
             -u "${{ secrets.CPI_CLIENT_ID }}:${{ secrets.CPI_CLIENT_SECRET }}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials" \
             "${{ secrets.CPI_TOKEN_URL }}")
 
-          TOKEN=$(echo $RESPONSE | jq -r '.access_token')
+          echo "===== RAW RESPONSE ====="
+          echo "$RESPONSE"
+          echo "========================"
+
+          # Validate JSON
+          if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
+            echo "❌ Response is not valid JSON"
+            exit 1
+          fi
+
+          # Extract token
+          TOKEN=$(echo "$RESPONSE" | jq -r '.access_token // empty')
+
+          # Fail if token missing
+          if [ -z "$TOKEN" ]; then
+            echo "❌ Token not found"
+            echo "Error:"
+            echo "$RESPONSE" | jq -r '.error // "N/A"'
+            echo "Description:"
+            echo "$RESPONSE" | jq -r '.error_description // "N/A"'
+            exit 1
+          fi
+
+          echo "✅ Token fetched"
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
-          
-      - name: Read Token
+
+      # 4️⃣ Fetch Interfaces (JSON)
+      - name: Fetch Interfaces
         run: |
-          echo "Token is:"
-          echo "${{ steps.get_token.outputs.token }}"
-      - name: Fetch Changed Interfaces
-        run: |
+          echo "Fetching interfaces..."
+
           curl -s -X GET \
-            "${{ secrets.CPI_HOST }}/api/v1/IntegrationContentChangedInterfaces" \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts" \
             -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
             -H "Accept: application/json" \
-            -o changed_interfaces.json
+            -o interfaces.json
 
+          echo "Preview:"
+          cat interfaces.json | head -20
+
+      # 5️⃣ OPTIONAL: Download iFlow ZIP
+      - name: Download iFlow ZIP
+        run: |
+          echo "Downloading iFlow artifact..."
+
+          curl -s -L -X GET \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value" \
+            -H "Authorization: Bearer ${{ steps.get_token.outputs.token }}" \
+            -H "Accept: application/zip" \
+            -o iflow.zip
+
+          echo "File info:"
+          file iflow.zip
+
+      # 6️⃣ Upload Results
       - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
-          name: changed-interfaces
-          path: changed_interfaces.json
+          name: cpi-results
+          path: |
+            interfaces.json
+            iflow.zip
