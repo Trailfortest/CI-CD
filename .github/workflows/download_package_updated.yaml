@@ -11,20 +11,24 @@ jobs:
     environment: dev   # use the environment where secrets are stored
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
+      CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
+      CPI_TOKEN_URL: ${{ secrets.CPI_TOKEN_URL }}
+      CPI_HOST: ${{ secrets.CPI_HOST }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
- 
+
       - name: Get OAuth Token
         id: get_token
         shell: bash
         run: |
           RESPONSE=$(curl -s -X POST \
-            "${{ secrets.CPI_TOKEN_URL }} \
+            "${CPI_TOKEN_URL}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "grant_type=client_credentials" \
-            --data-urlencode "client_id=${{ secrets.CPI_CLIENT_ID }}" \
-            --data-urlencode "client_secret=${{ secrets.CPI_CLIENT_SECRET }}" )
+            --data-urlencode "client_id=${CPI_CLIENT_ID}" \
+            --data-urlencode "client_secret=${CPI_CLIENT_SECRET}")
           echo "Raw Response: $RESPONSE"
 
           TOKEN=$(echo $RESPONSE | jq -r '.access_token')
