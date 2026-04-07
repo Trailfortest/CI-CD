@@ -62,26 +62,48 @@ jobs:
 
           echo "Packages found:"
           cat all_packages.json
+          echo "Total packages: $(cat all_packages.json | jq length)"
 
-          # ── Step 2: Get all iFlows ─────────────────────────────────────
-          echo "Fetching all iFlows..."
-          curl -s -X GET \
-            "${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts" \
-            -H "Authorization: Bearer ${TOKEN}" \
-            -H "Accept: application/json" \
-            | jq '[.d.results[] | {
-                Id,
-                Name,
-                Version,
-                PackageId,
-                ModifiedAt,
-                CreatedAt,
-                Description
-              }]' \
-            > all_iflows.json
+          # ── Step 2: Get iFlows per package ─────────────────────────────
+          echo "[]" > all_iflows.json
 
-          echo "iFlows found:"
-          cat all_iflows.json
+          while IFS= read -r PKG_ID; do
+            echo "──────────────────────────────────────"
+            echo "Fetching iFlows for package: ${PKG_ID}"
+
+            RESPONSE=$(curl -s -X GET \
+              "${BASE_URL}/api/v1/IntegrationPackages('${PKG_ID}')/IntegrationDesigntimeArtifacts" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Accept: application/json")
+
+            # Check if results exist
+            RESULTS=$(echo "${RESPONSE}" | jq '.d.results // []')
+
+            COUNT=$(echo "${RESULTS}" | jq length)
+            echo "iFlows in ${PKG_ID}: ${COUNT}"
+
+            if [ "$COUNT" -gt 0 ]; then
+              # Merge into all_iflows.json
+              jq --argjson existing "$(cat all_iflows.json)" \
+                --argjson new "$RESULTS" \
+                '$existing + ($new | map({
+                  Id,
+                  Name,
+                  Version,
+                  PackageId,
+                  ModifiedAt,
+                  CreatedAt,
+                  Description
+                }))' \
+                all_iflows.json > all_iflows_tmp.json \
+                && mv all_iflows_tmp.json all_iflows.json
+            fi
+
+          done < <(jq -r '.[].Id' all_packages.json)
+
+          echo "=============================="
+          echo "All iFlows:"
+          cat all_iflows.json | jq .
           echo "Total iFlows: $(cat all_iflows.json | jq length)"
 
       - name: Compare Versions and Generate Report
@@ -99,18 +121,16 @@ jobs:
           echo "**Generated:** ${TIMESTAMP}" >> $REPORT
           echo "" >> $REPORT
 
-          # ── All current interfaces with versions ───────────────────────
+          # ── All current interfaces ─────────────────────────────────────
           echo "## All Interfaces" >> $REPORT
           echo "" >> $REPORT
           echo "| Interface ID | Name | Version | Package | Last Modified |" >> $REPORT
           echo "|---|---|---|---|---|" >> $REPORT
-
           jq -r '.[] | "| \(.Id) | \(.Name) | \(.Version) | \(.PackageId) | \(.ModifiedAt) |"' \
             $CURRENT >> $REPORT
-
           echo "" >> $REPORT
 
-          # ── Compare with previous run if exists ────────────────────────
+          # ── Compare with previous run ──────────────────────────────────
           if [ -f "$PREVIOUS" ]; then
             echo "## Changed Interfaces Since Last Run" >> $REPORT
             echo "" >> $REPORT
@@ -118,26 +138,25 @@ jobs:
             echo "|---|---|---|---|---|" >> $REPORT
 
             CHANGED=0
-
-            # Loop through current iFlows and compare versions
             while IFS= read -r IFLOW_ID; do
               CURRENT_VERSION=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .Version' $CURRENT)
               CURRENT_NAME=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .Name' $CURRENT)
               CURRENT_PKG=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .PackageId' $CURRENT)
-              OLD_VERSION=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .Version' $PREVIOUS 2>/dev/null || echo "N/A")
+              OLD_VERSION=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .Version' $PREVIOUS 2>/dev/null || echo "")
 
-              if [ "$OLD_VERSION" = "null" ] || [ -z "$OLD_VERSION" ]; then
-                # New iFlow not in previous run
+              if [ -z "$OLD_VERSION" ] || [ "$OLD_VERSION" = "null" ]; then
                 echo "| $IFLOW_ID | $CURRENT_NAME | ➕ NEW | $CURRENT_VERSION | $CURRENT_PKG |" >> $REPORT
                 CHANGED=$((CHANGED + 1))
               elif [ "$OLD_VERSION" != "$CURRENT_VERSION" ]; then
-                # Version changed
                 echo "| $IFLOW_ID | $CURRENT_NAME | $OLD_VERSION | $CURRENT_VERSION | $CURRENT_PKG |" >> $REPORT
                 CHANGED=$((CHANGED + 1))
               fi
             done < <(jq -r '.[].Id' $CURRENT)
 
-            # Check for deleted iFlows
+            if [ "$CHANGED" -eq 0 ]; then
+              echo "| — | No changes detected | — | — | — |" >> $REPORT
+            fi
+
             echo "" >> $REPORT
             echo "## Deleted Interfaces" >> $REPORT
             echo "" >> $REPORT
@@ -169,7 +188,6 @@ jobs:
             echo "| Deleted          | $DELETED |" >> $REPORT
 
           else
-            # First run — no previous data to compare
             echo "## Version Changes" >> $REPORT
             echo "" >> $REPORT
             echo "> ⚠️ No previous data found. This is the first run — baseline established." >> $REPORT
@@ -183,10 +201,8 @@ jobs:
             echo "| Deleted          | — |" >> $REPORT
           fi
 
-          echo ""
           echo "=============================="
-          echo "VERSION REPORT PREVIEW:"
-          echo "=============================="
+          echo "REPORT PREVIEW:"
           cat $REPORT
 
       - name: Download Each iFlow as ZIP
