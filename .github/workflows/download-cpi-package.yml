@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}   # needed for push permission
 
       - name: Get OAuth Token
         id: get_token
@@ -45,7 +47,7 @@ jobs:
         shell: bash
         run: |
           TOKEN=$(cat /tmp/cpi_token.txt)
-          BASE_URL="${CPI_HOST%/}"   # Strip trailing slash safely
+          BASE_URL="${CPI_HOST%/}"
           FULL_URL="${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value"
 
           echo "Calling: ${FULL_URL}"
@@ -66,7 +68,7 @@ jobs:
             exit 1
           fi
 
-          # Verify it is a valid ZIP before extracting
+          # Verify it is a valid ZIP
           if ! file MyiFlow.zip | grep -q "Zip archive"; then
             echo "ERROR: Downloaded file is not a valid ZIP"
             cat MyiFlow.zip
@@ -76,15 +78,28 @@ jobs:
           echo "ZIP verified. Contents:"
           unzip -l MyiFlow.zip
 
-          # Extract ZIP contents into a folder
-          mkdir -p MyiFlow-extracted
-          unzip -o MyiFlow.zip -d MyiFlow-extracted
+          # Extract into the target repo folder
+          mkdir -p CI-CD/.github/workflows/MyiFlow
+          unzip -o MyiFlow.zip -d CI-CD/.github/workflows/MyiFlow
 
           echo "Extracted files:"
-          find MyiFlow-extracted -type f
+          find CI-CD/.github/workflows/MyiFlow -type f
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MyiFlow-zip
-          path: MyiFlow-extracted/   # Upload folder contents, not the ZIP itself
+      - name: Commit and Push to Repository
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage all extracted files
+          git add CI-CD/.github/workflows/MyiFlow/
+
+          # Check if there are any changes to commit
+          if git diff --cached --quiet; then
+            echo "No changes detected. Skipping commit."
+          else
+            TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            git commit -m "chore: update MyiFlow from SAP CPI - ${TIMESTAMP}"
+            git push
+            echo "Changes committed and pushed successfully."
+          fi
