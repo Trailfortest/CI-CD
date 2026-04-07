@@ -51,7 +51,7 @@ jobs:
             -o changed_interfaces.json \
             -w "%{http_code}" \
             -X GET \
-            "${CPI_HOST}api/v1/IntegrationDesigntimeArtifacts/$value" \
+            "${CPI_HOST}api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/$value" \
             -H "Authorization: Bearer ${TOKEN}" \
             -H "Accept: application/json")
 
