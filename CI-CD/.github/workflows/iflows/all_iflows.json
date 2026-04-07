@@ -7,5 +7,14 @@
     "ModifiedAt": "1775563176828",
     "CreatedAt": "1775556951844",
     "Description": "for this testing"
+  },
+  {
+    "Id": "testing_for_interface",
+    "Name": "testing for interface",
+    "Version": "1.0.0",
+    "PackageId": "Test",
+    "ModifiedAt": "1775564675843",
+    "CreatedAt": "1775564675832",
+    "Description": "Testing of second interface"
   }
 ]
