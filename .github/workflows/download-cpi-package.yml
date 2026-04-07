@@ -40,32 +40,37 @@ jobs:
           printf '%s' "${TOKEN}" > /tmp/cpi_token.txt
           echo "Token saved. Length: ${#TOKEN}"
 
-      - name: Fetch All iFlows
+      - name: Fetch iFlow as ZIP
         shell: bash
         run: |
           TOKEN=$(cat /tmp/cpi_token.txt)
-          BASE_URL="${CPI_HOST%/}"   # strip trailing slash safely
+          BASE_URL="${CPI_HOST%/}"    # safely strip trailing slash
 
-          echo "Calling: ${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts"
+          FULL_URL="${BASE_URL}api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value"
+          echo "Calling: ${FULL_URL}"
 
           HTTP_STATUS=$(curl -s \
-            -o changed_interfaces.json \
+            -o MyiFlow.zip \
             -w "%{http_code}" \
             -X GET \
-            "${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts" \
+            "${FULL_URL}" \
             -H "Authorization: Bearer ${TOKEN}" \
-            -H "Accept: application/json")
+            -H "Accept: application/octet-stream")
 
           echo "HTTP Status: $HTTP_STATUS"
-          cat changed_interfaces.json | jq . || cat changed_interfaces.json
 
           if [ "$HTTP_STATUS" -ne 200 ]; then
-            echo "ERROR: API request failed with status $HTTP_STATUS"
+            echo "ERROR: API failed with status $HTTP_STATUS"
+            cat MyiFlow.zip
             exit 1
           fi
 
-      - name: Upload Results
+          # Verify it's actually a ZIP
+          file MyiFlow.zip
+          unzip -l MyiFlow.zip
+
+      - name: Upload ZIP Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: changed-interfaces
-          path: changed_interfaces.json
+          name: MyiFlow-zip
+          path: MyiFlow.zip
