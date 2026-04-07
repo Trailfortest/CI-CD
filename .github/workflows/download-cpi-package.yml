@@ -3,7 +3,7 @@ name: SAP CPI Fetch All Interfaces
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "0 3 * * *"   # Daily at 3 AM UTC
 
 permissions:
   contents: write
@@ -24,6 +24,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+          fetch-depth: 0     # fetch full history to avoid conflicts
 
       - name: Get OAuth Token
         shell: bash
@@ -76,14 +78,11 @@ jobs:
               -H "Authorization: Bearer ${TOKEN}" \
               -H "Accept: application/json")
 
-            # Check if results exist
             RESULTS=$(echo "${RESPONSE}" | jq '.d.results // []')
-
             COUNT=$(echo "${RESULTS}" | jq length)
             echo "iFlows in ${PKG_ID}: ${COUNT}"
 
             if [ "$COUNT" -gt 0 ]; then
-              # Merge into all_iflows.json
               jq --argjson existing "$(cat all_iflows.json)" \
                 --argjson new "$RESULTS" \
                 '$existing + ($new | map({
@@ -261,6 +260,10 @@ jobs:
           else
             TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
             git commit -m "chore: sync SAP CPI iFlows - ${TIMESTAMP}"
-            git push
+
+            # Pull latest remote changes before pushing
+            git pull --rebase origin main
+
+            git push origin main
             echo "Committed and pushed successfully."
           fi
