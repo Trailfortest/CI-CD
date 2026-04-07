@@ -1,4 +1,4 @@
-name: SAP CPI Interface Change Fetch
+name: SAP CPI Fetch All Interfaces
 
 on:
   workflow_dispatch:
@@ -6,10 +6,10 @@ on:
     - cron: "0 3 * * *"
 
 permissions:
-  contents: write        # ← allows git push back to repo
+  contents: write
 
 jobs:
-  fetch-changes:
+  fetch-all-interfaces:
     runs-on: ubuntu-latest
     environment: dev
     env:
@@ -23,10 +23,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GIT_CICD_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get OAuth Token
-        id: get_token
         shell: bash
         run: |
           BODY=$(curl -s -X POST \
@@ -39,54 +38,199 @@ jobs:
           TOKEN=$(printf '%s' "${BODY}" | jq -r '.access_token // empty' 2>/dev/null || true)
 
           if [ "${#TOKEN}" -lt 10 ]; then
-            echo "ERROR: Token is empty or too short. Check credentials."
+            echo "ERROR: Token is empty or too short"
             exit 1
           fi
 
           printf '%s' "${TOKEN}" > /tmp/cpi_token.txt
-          echo "Token saved successfully. Length: ${#TOKEN}"
+          echo "Token saved. Length: ${#TOKEN}"
 
-      - name: Fetch iFlow as ZIP
+      - name: Fetch All Packages and iFlows
         shell: bash
         run: |
           TOKEN=$(cat /tmp/cpi_token.txt)
           BASE_URL="${CPI_HOST%/}"
-          FULL_URL="${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value"
 
-          echo "Calling: ${FULL_URL}"
-
-          HTTP_STATUS=$(curl -s \
-            -o MyiFlow.zip \
-            -w "%{http_code}" \
-            -X GET \
-            "${FULL_URL}" \
+          # ── Step 1: Get all packages ───────────────────────────────────
+          echo "Fetching all packages..."
+          curl -s -X GET \
+            "${BASE_URL}/api/v1/IntegrationPackages" \
             -H "Authorization: Bearer ${TOKEN}" \
-            -H "Accept: application/octet-stream")
+            -H "Accept: application/json" \
+            | jq '[.d.results[] | {Id, Name, Version}]' \
+            > all_packages.json
 
-          echo "HTTP Status: $HTTP_STATUS"
+          echo "Packages found:"
+          cat all_packages.json
 
-          if [ "$HTTP_STATUS" -ne 200 ]; then
-            echo "ERROR: API failed with status $HTTP_STATUS"
-            cat MyiFlow.zip
-            exit 1
+          # ── Step 2: Get all iFlows ─────────────────────────────────────
+          echo "Fetching all iFlows..."
+          curl -s -X GET \
+            "${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/json" \
+            | jq '[.d.results[] | {
+                Id,
+                Name,
+                Version,
+                PackageId,
+                ModifiedAt,
+                CreatedAt,
+                Description
+              }]' \
+            > all_iflows.json
+
+          echo "iFlows found:"
+          cat all_iflows.json
+          echo "Total iFlows: $(cat all_iflows.json | jq length)"
+
+      - name: Compare Versions and Generate Report
+        shell: bash
+        run: |
+          PREVIOUS="CI-CD/.github/workflows/iflows/all_iflows.json"
+          CURRENT="all_iflows.json"
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          REPORT="CI-CD/.github/workflows/iflows/version_report.md"
+
+          mkdir -p CI-CD/.github/workflows/iflows
+
+          echo "# SAP CPI Interface Version Report" > $REPORT
+          echo "" >> $REPORT
+          echo "**Generated:** ${TIMESTAMP}" >> $REPORT
+          echo "" >> $REPORT
+
+          # ── All current interfaces with versions ───────────────────────
+          echo "## All Interfaces" >> $REPORT
+          echo "" >> $REPORT
+          echo "| Interface ID | Name | Version | Package | Last Modified |" >> $REPORT
+          echo "|---|---|---|---|---|" >> $REPORT
+
+          jq -r '.[] | "| \(.Id) | \(.Name) | \(.Version) | \(.PackageId) | \(.ModifiedAt) |"' \
+            $CURRENT >> $REPORT
+
+          echo "" >> $REPORT
+
+          # ── Compare with previous run if exists ────────────────────────
+          if [ -f "$PREVIOUS" ]; then
+            echo "## Changed Interfaces Since Last Run" >> $REPORT
+            echo "" >> $REPORT
+            echo "| Interface ID | Name | Old Version | New Version | Package |" >> $REPORT
+            echo "|---|---|---|---|---|" >> $REPORT
+
+            CHANGED=0
+
+            # Loop through current iFlows and compare versions
+            while IFS= read -r IFLOW_ID; do
+              CURRENT_VERSION=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .Version' $CURRENT)
+              CURRENT_NAME=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .Name' $CURRENT)
+              CURRENT_PKG=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .PackageId' $CURRENT)
+              OLD_VERSION=$(jq -r --arg id "$IFLOW_ID" '.[] | select(.Id == $id) | .Version' $PREVIOUS 2>/dev/null || echo "N/A")
+
+              if [ "$OLD_VERSION" = "null" ] || [ -z "$OLD_VERSION" ]; then
+                # New iFlow not in previous run
+                echo "| $IFLOW_ID | $CURRENT_NAME | ➕ NEW | $CURRENT_VERSION | $CURRENT_PKG |" >> $REPORT
+                CHANGED=$((CHANGED + 1))
+              elif [ "$OLD_VERSION" != "$CURRENT_VERSION" ]; then
+                # Version changed
+                echo "| $IFLOW_ID | $CURRENT_NAME | $OLD_VERSION | $CURRENT_VERSION | $CURRENT_PKG |" >> $REPORT
+                CHANGED=$((CHANGED + 1))
+              fi
+            done < <(jq -r '.[].Id' $CURRENT)
+
+            # Check for deleted iFlows
+            echo "" >> $REPORT
+            echo "## Deleted Interfaces" >> $REPORT
+            echo "" >> $REPORT
+            echo "| Interface ID | Name | Last Known Version |" >> $REPORT
+            echo "|---|---|---|" >> $REPORT
+
+            DELETED=0
+            while IFS= read -r OLD_ID; do
+              EXISTS=$(jq -r --arg id "$OLD_ID" '.[] | select(.Id == $id) | .Id' $CURRENT)
+              if [ -z "$EXISTS" ]; then
+                OLD_NAME=$(jq -r --arg id "$OLD_ID" '.[] | select(.Id == $id) | .Name' $PREVIOUS)
+                OLD_VER=$(jq -r --arg id "$OLD_ID" '.[] | select(.Id == $id) | .Version' $PREVIOUS)
+                echo "| $OLD_ID | $OLD_NAME | $OLD_VER |" >> $REPORT
+                DELETED=$((DELETED + 1))
+              fi
+            done < <(jq -r '.[].Id' $PREVIOUS)
+
+            if [ "$DELETED" -eq 0 ]; then
+              echo "| — | No deletions detected | — |" >> $REPORT
+            fi
+
+            echo "" >> $REPORT
+            echo "## Summary" >> $REPORT
+            echo "" >> $REPORT
+            echo "| Metric | Count |" >> $REPORT
+            echo "|---|---|" >> $REPORT
+            echo "| Total Interfaces | $(jq length $CURRENT) |" >> $REPORT
+            echo "| Changed / New    | $CHANGED |" >> $REPORT
+            echo "| Deleted          | $DELETED |" >> $REPORT
+
+          else
+            # First run — no previous data to compare
+            echo "## Version Changes" >> $REPORT
+            echo "" >> $REPORT
+            echo "> ⚠️ No previous data found. This is the first run — baseline established." >> $REPORT
+            echo "" >> $REPORT
+            echo "## Summary" >> $REPORT
+            echo "" >> $REPORT
+            echo "| Metric | Count |" >> $REPORT
+            echo "|---|---|" >> $REPORT
+            echo "| Total Interfaces | $(jq length $CURRENT) |" >> $REPORT
+            echo "| Changed / New    | — |" >> $REPORT
+            echo "| Deleted          | — |" >> $REPORT
           fi
 
-          # Verify it is a valid ZIP
-          if ! file MyiFlow.zip | grep -q "Zip archive"; then
-            echo "ERROR: Downloaded file is not a valid ZIP"
-            cat MyiFlow.zip
-            exit 1
-          fi
+          echo ""
+          echo "=============================="
+          echo "VERSION REPORT PREVIEW:"
+          echo "=============================="
+          cat $REPORT
 
-          echo "ZIP verified. Contents:"
-          unzip -l MyiFlow.zip
+      - name: Download Each iFlow as ZIP
+        shell: bash
+        run: |
+          TOKEN=$(cat /tmp/cpi_token.txt)
+          BASE_URL="${CPI_HOST%/}"
+          IFLOW_IDS=$(cat all_iflows.json | jq -r '.[].Id')
 
-          # Extract into the target repo folder
-          mkdir -p CI-CD/.github/workflows/MyiFlow
-          unzip -o MyiFlow.zip -d CI-CD/.github/workflows/MyiFlow
+          mkdir -p CI-CD/.github/workflows/iflows
 
-          echo "Extracted files:"
-          find CI-CD/.github/workflows/MyiFlow -type f
+          for IFLOW_ID in $IFLOW_IDS; do
+            echo "──────────────────────────────────────"
+            echo "Downloading iFlow: ${IFLOW_ID}"
+
+            HTTP_STATUS=$(curl -s \
+              -o "${IFLOW_ID}.zip" \
+              -w "%{http_code}" \
+              -X GET \
+              "${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts(Id='${IFLOW_ID}',Version='Active')/\$value" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Accept: application/octet-stream")
+
+            echo "HTTP Status: $HTTP_STATUS"
+
+            if [ "$HTTP_STATUS" -ne 200 ]; then
+              echo "WARNING: Failed to download ${IFLOW_ID} (status $HTTP_STATUS), skipping..."
+              continue
+            fi
+
+            if file "${IFLOW_ID}.zip" | grep -q "Zip archive"; then
+              mkdir -p "CI-CD/.github/workflows/iflows/${IFLOW_ID}"
+              unzip -o "${IFLOW_ID}.zip" -d "CI-CD/.github/workflows/iflows/${IFLOW_ID}"
+              echo "Extracted: ${IFLOW_ID}"
+            else
+              echo "WARNING: ${IFLOW_ID}.zip is not a valid ZIP, skipping..."
+            fi
+          done
+
+      - name: Save Inventory Files
+        shell: bash
+        run: |
+          cp all_packages.json CI-CD/.github/workflows/iflows/all_packages.json
+          cp all_iflows.json   CI-CD/.github/workflows/iflows/all_iflows.json
 
       - name: Commit and Push to Repository
         shell: bash
@@ -94,13 +238,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add CI-CD/.github/workflows/MyiFlow/
+          git add CI-CD/.github/workflows/iflows/
 
           if git diff --cached --quiet; then
             echo "No changes detected. Skipping commit."
           else
             TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-            git commit -m "chore: update MyiFlow from SAP CPI - ${TIMESTAMP}"
+            git commit -m "chore: sync SAP CPI iFlows - ${TIMESTAMP}"
             git push
-            echo "Changes committed and pushed successfully."
+            echo "Committed and pushed successfully."
           fi
