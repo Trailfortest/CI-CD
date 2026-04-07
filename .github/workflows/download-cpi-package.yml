@@ -57,7 +57,7 @@ jobs:
             -o changed_interfaces.json \
             -w "%{http_code}" \
             -X GET \
-            "${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')" \
+            "${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts" \
             -H "Authorization: Bearer ${TOKEN}" \
             -H "Accept: application/json")
 
