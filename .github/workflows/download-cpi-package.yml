@@ -3,7 +3,10 @@ name: SAP CPI Interface Change Fetch
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"   # Daily at 3 AM UTC
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: write        # ← allows git push back to repo
 
 jobs:
   fetch-changes:
@@ -20,7 +23,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}   # needed for push permission
+          token: ${{ secrets.GIT_CICD_TOKEN }}
 
       - name: Get OAuth Token
         id: get_token
@@ -91,10 +94,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage all extracted files
           git add CI-CD/.github/workflows/MyiFlow/
 
-          # Check if there are any changes to commit
           if git diff --cached --quiet; then
             echo "No changes detected. Skipping commit."
           else
