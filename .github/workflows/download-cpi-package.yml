@@ -46,7 +46,7 @@ jobs:
           TOKEN=$(cat /tmp/cpi_token.txt)
           BASE_URL="${CPI_HOST%/}"    # safely strip trailing slash
 
-          FULL_URL="${BASE_URL}api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value"
+          FULL_URL="${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value"
           echo "Calling: ${FULL_URL}"
 
           HTTP_STATUS=$(curl -s \
