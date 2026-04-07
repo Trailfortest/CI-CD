@@ -3,7 +3,7 @@ name: SAP CPI Interface Change Fetch
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"
+    - cron: "0 3 * * *"   # Daily at 3 AM UTC
 
 jobs:
   fetch-changes:
@@ -34,19 +34,20 @@ jobs:
           TOKEN=$(printf '%s' "${BODY}" | jq -r '.access_token // empty' 2>/dev/null || true)
 
           if [ "${#TOKEN}" -lt 10 ]; then
-            echo "ERROR: Token is empty or too short"
+            echo "ERROR: Token is empty or too short. Check credentials."
             exit 1
           fi
+
           printf '%s' "${TOKEN}" > /tmp/cpi_token.txt
-          echo "Token saved. Length: ${#TOKEN}"
+          echo "Token saved successfully. Length: ${#TOKEN}"
 
       - name: Fetch iFlow as ZIP
         shell: bash
         run: |
           TOKEN=$(cat /tmp/cpi_token.txt)
-          BASE_URL="${CPI_HOST%/}"    # safely strip trailing slash
-
+          BASE_URL="${CPI_HOST%/}"   # Strip trailing slash safely
           FULL_URL="${BASE_URL}/api/v1/IntegrationDesigntimeArtifacts(Id='MyiFlow',Version='Active')/\$value"
+
           echo "Calling: ${FULL_URL}"
 
           HTTP_STATUS=$(curl -s \
@@ -65,12 +66,25 @@ jobs:
             exit 1
           fi
 
-          # Verify it's actually a ZIP
-          file MyiFlow.zip
+          # Verify it is a valid ZIP before extracting
+          if ! file MyiFlow.zip | grep -q "Zip archive"; then
+            echo "ERROR: Downloaded file is not a valid ZIP"
+            cat MyiFlow.zip
+            exit 1
+          fi
+
+          echo "ZIP verified. Contents:"
           unzip -l MyiFlow.zip
 
-      - name: Upload ZIP Artifact
+          # Extract ZIP contents into a folder
+          mkdir -p MyiFlow-extracted
+          unzip -o MyiFlow.zip -d MyiFlow-extracted
+
+          echo "Extracted files:"
+          find MyiFlow-extracted -type f
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MyiFlow-zip
-          path: MyiFlow.zip
+          path: MyiFlow-extracted/   # Upload folder contents, not the ZIP itself
