@@ -1,0 +1,53 @@
+name: Generate CPI Deployment File
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get OAuth Token
+        id: get_token
+        run: |
+          BODY=$(curl -s -X POST "${{ secrets.CPI_TOKEN_URL }}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials" \
+            -d "client_id=${{ secrets.CPI_CLIENT_ID }}" \
+            -d "client_secret=${{ secrets.CPI_CLIENT_SECRET }}")
+          TOKEN=$(echo "$BODY" | jq -r '.access_token')
+          echo "token=$TOKEN" >> $GITHUB_ENV
+
+      - name: Fetch iFlow List for Package
+        id: fetch_iflows
+        run: |
+          curl -s -X GET \
+            "${{ secrets.CPI_HOST }}/api/v1/IntegrationPackages('MyPackage')/IntegrationDesigntimeArtifacts" \
+            -H "Authorization: Bearer ${{ env.token }}" \
+            -H "Accept: application/json" \
+            > iflow_list.json
+
+      - name: Create Deployment File
+        id: create_deployment
+        uses: ./.github/actions/create-deployment-file   # Calls the action
+        with:
+          bearer-token: ${{ env.token }}
+          btp-api-url:  ${{ secrets.CPI_HOST }}
+          package-id:   MyPackage
+          package-name: My Package Display Name
+          file:         iflow_list.json
+
+      - name: Show Output Path
+        run: echo "Generated at ${{ steps.create_deployment.outputs.path }}"
+
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add btp-insuite/IntegrationPackages/
+          git diff --cached --quiet || git commit -m "chore: update deployment config"
+          git pull --rebase origin main
+          git push origin main
