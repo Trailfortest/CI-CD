@@ -3,7 +3,8 @@ name: SAP CPI Deploy / Undeploy iFlows
 on:
   push:
     paths:
-      - 'btp-insuite/IntegrationPackages/**/Deployment_INTEGRATION_FLOW.json'
+      # ✅ UPDATED: trigger on JSON files inside .github/workflows
+      - '.github/workflows/**/Deployment_INTEGRATION_FLOW.json'
   workflow_dispatch:
     inputs:
       package_id:
@@ -61,8 +62,8 @@ jobs:
           echo "| iFlow ID | Action | Status | Message |" >> $REPORT
           echo "|---|---|---|---|" >> $REPORT
 
-          # Find all deployment JSON files
-          find btp-insuite/IntegrationPackages -name "Deployment_INTEGRATION_FLOW.json" | while read -r FILE; do
+          # ✅ UPDATED: Find JSON files inside .github/workflows
+          find .github/workflows -name "Deployment_INTEGRATION_FLOW.json" | while read -r FILE; do
             echo "=============================="
             echo "Processing: $FILE"
 
@@ -70,7 +71,6 @@ jobs:
             PKG_NAME=$(jq -r '.PackageIntegrationFlowDeployments.PackageName' "$FILE")
             echo "Package: $PKG_NAME ($PKG_ID)"
 
-            # Loop each iFlow in the file
             while IFS= read -r IFLOW; do
               IFLOW_ID=$(echo "$IFLOW" | jq -r '.ArtifactID')
               IFLOW_NAME=$(echo "$IFLOW" | jq -r '.ArtifactName')
@@ -89,8 +89,7 @@ jobs:
                   -o /tmp/deploy_response.json \
                   -w "%{http_code}" \
                   -X POST \
-                  "${BASE_URL}/api/v1/DeployIntegrationDesigntimeArtifact?\
-Id='${IFLOW_ID}'&Version='Active'" \
+                  "${BASE_URL}/api/v1/DeployIntegrationDesigntimeArtifact?Id='${IFLOW_ID}'&Version='Active'" \
                   -H "Authorization: Bearer ${TOKEN}" \
                   -H "Accept: application/json")
 
@@ -181,7 +180,8 @@ Id='${IFLOW_ID}'&Version='Active'" \
           echo "| iFlow ID | Runtime Status | Version |" >> deployment_status_report.md
           echo "|---|---|---|" >> deployment_status_report.md
 
-          find btp-insuite/IntegrationPackages -name "Deployment_INTEGRATION_FLOW.json" | while read -r FILE; do
+          # ✅ CORRECT: already pointing to .github/workflows
+          find .github/workflows -name "Deployment_INTEGRATION_FLOW.json" | while read -r FILE; do
             while IFS= read -r IFLOW_ID; do
               sleep 1
               RESPONSE=$(curl -s -X GET \
@@ -201,16 +201,20 @@ Id='${IFLOW_ID}'&Version='Active'" \
       - name: Save and Commit Report
         shell: bash
         run: |
-          mkdir -p btp-insuite/IntegrationPackages/reports
+          # ✅ UPDATED: Save reports inside .github/workflows/reports
+          mkdir -p .github/workflows/reports
           TIMESTAMP=$(date -u +"%Y%m%d_%H%M%S")
+
           cp deployment_status_report.md \
-            "btp-insuite/IntegrationPackages/reports/deployment_${TIMESTAMP}.md"
+            ".github/workflows/reports/deployment_${TIMESTAMP}.md"
           cp deployment_status_report.md \
-            "btp-insuite/IntegrationPackages/reports/latest_deployment.md"
+            ".github/workflows/reports/latest_deployment.md"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add btp-insuite/IntegrationPackages/reports/
+
+          # ✅ UPDATED: Stage reports from new path
+          git add .github/workflows/reports/
           git diff --cached --quiet || (
             git commit -m "chore: deployment status report - ${TIMESTAMP}" &&
             git pull --rebase origin main &&
