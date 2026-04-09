@@ -1,7 +1,7 @@
 {
   "PackageIntegrationFlowDeployments": {
-    "PackageID": "your_package_id",
-    "PackageName": "Your Package Name",
+    "PackageID": "Test",
+    "PackageName": "Test",
     "IntegrationFlows": [
       {
         "ArtifactID": "your_iflow_id_1",
@@ -10,13 +10,6 @@
         "Rank": 1,
         "LogLevel": "INFO"
       },
-      {
-        "ArtifactID": "your_iflow_id_2",
-        "ArtifactName": "Your iFlow Name 2",
-        "Deploy": false,
-        "Rank": 1,
-        "LogLevel": "DEBUG"
-      }
     ]
   }
 }
