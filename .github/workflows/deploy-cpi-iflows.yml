@@ -1,5 +1,4 @@
 name: SAP CPI IFlow Deployment
-
 on:
   workflow_dispatch:
   push:
@@ -9,7 +8,7 @@ on:
 jobs:
   deploy-iflows:
     runs-on: ubuntu-latest
-    environment: dev  # Use the environment where secrets are stored
+    environment: dev
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
@@ -21,66 +20,171 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v4
 
+      # ─────────────────────────────────────────────
+      # STEP 1: Get OAuth Token
+      # ─────────────────────────────────────────────
       - name: Get OAuth Token
         id: get_token
         run: |
+          echo "Requesting OAuth token from: ${CPI_TOKEN_URL}"
+
           BODY=$(curl -s -X POST "${CPI_TOKEN_URL}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials" \
             -d "client_id=${CPI_CLIENT_ID}" \
             -d "client_secret=${CPI_CLIENT_SECRET}")
 
+          # Debug: print response structure (without exposing token)
+          echo "Token response keys: $(echo "$BODY" | jq 'keys')"
+
           TOKEN=$(echo "$BODY" | jq -r '.access_token // empty')
 
           if [ -z "$TOKEN" ]; then
-            echo "ERROR: Unable to retrieve OAuth Token"
+            echo "ERROR: Unable to retrieve OAuth token."
+            echo "Response body: $BODY"
             exit 1
           fi
 
+          echo "OAuth token retrieved successfully."
           echo "$TOKEN" > /tmp/cpi_token.txt
 
+      # ─────────────────────────────────────────────
+      # STEP 2: Read IFlows from JSON config
+      # ─────────────────────────────────────────────
       - name: Read Interfaces from JSON
         id: read_iflows
         run: |
           IFLOW_FILE=".github/workflows/Deployment_INTEGRATION_FLOW.json"
+
           if [ ! -f "$IFLOW_FILE" ]; then
-            echo "ERROR: IFlow configuration file not found at $IFLOW_FILE."
+            echo "ERROR: IFlow configuration file not found at $IFLOW_FILE"
             exit 1
           fi
 
-          # Read the IntegrationFlows array from JSON using jq
-          IFLOWS=$(jq -c '.PackageIntegrationFlowDeployments.IntegrationFlows[]' "$IFLOW_FILE")
-          echo "$IFLOWS" > /tmp/iflows.txt
+          echo "IFlow config file found. Contents:"
+          cat "$IFLOW_FILE"
 
+          # Validate JSON structure
+          if ! jq -e '.PackageIntegrationFlowDeployments.IntegrationFlows' "$IFLOW_FILE" > /dev/null 2>&1; then
+            echo "ERROR: JSON structure invalid. Expected .PackageIntegrationFlowDeployments.IntegrationFlows"
+            exit 1
+          fi
+
+          IFLOW_COUNT=$(jq '.PackageIntegrationFlowDeployments.IntegrationFlows | length' "$IFLOW_FILE")
+          echo "Total IFlows found: $IFLOW_COUNT"
+
+          jq -c '.PackageIntegrationFlowDeployments.IntegrationFlows[]' "$IFLOW_FILE" > /tmp/iflows.txt
+          echo "IFlows written to /tmp/iflows.txt"
+
+      # ─────────────────────────────────────────────
+      # STEP 3: Deploy Integration Flows
+      # ─────────────────────────────────────────────
       - name: Deploy Integration Flows
         run: |
           TOKEN=$(cat /tmp/cpi_token.txt)
+
+          DEPLOY_SUMMARY=()
+          FAILED=0
+
+          # Initialise a summary JSON array for the artifact upload
+          echo "[]" > /tmp/deploy_results.json
+
           while IFS= read -r IFLOW; do
-            ARTIFACT_ID=$(echo "$IFLOW" | jq -r '.ArtifactID')
+            ARTIFACT_ID=$(echo "$IFLOW"   | jq -r '.ArtifactID')
             ARTIFACT_NAME=$(echo "$IFLOW" | jq -r '.ArtifactName')
-            DEPLOY=$(echo "$IFLOW" | jq -r '.Deploy')
+            DEPLOY=$(echo "$IFLOW"        | jq -r '.Deploy')
 
-            if [ "$DEPLOY" = "true" ]; then
-              echo "Deploying: $ARTIFACT_NAME (ID: $ARTIFACT_ID)"
+            echo "──────────────────────────────────────────────"
+            echo "IFlow       : $ARTIFACT_NAME"
+            echo "Artifact ID : $ARTIFACT_ID"
+            echo "Deploy flag : $DEPLOY"
 
-              # API call to deploy the integration flow
-              HTTP_STATUS=$(curl -s -o /tmp/deploy_response.json -w "%{http_code}" \
-                -X POST "${CPI_HOST}/api/v1/DeployIntegrationDesigntimeArtifact?Id='${ARTIFACT_ID}'&Version='Active'" \
-                -H "Authorization: Bearer ${TOKEN}" \
-                -H "Accept: application/json")
-
-              if [ "$HTTP_STATUS" -eq 200 ]; then
-                echo "Successfully deployed: $ARTIFACT_NAME"
-              else
-                echo "Failed to deploy: $ARTIFACT_NAME with HTTP status $HTTP_STATUS"
-                cat /tmp/deploy_response.json
-              fi
+            if [ "$DEPLOY" != "true" ]; then
+              echo "Skipping (Deploy=false)"
+              jq --arg id "$ARTIFACT_ID" \
+                 --arg name "$ARTIFACT_NAME" \
+                 --arg status "SKIPPED" \
+                 --arg code "-" \
+                 '. += [{"ArtifactID": $id, "ArtifactName": $name, "Status": $status, "HTTPCode": $code}]' \
+                 /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+                 && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+              continue
             fi
+
+            echo "Deploying..."
+
+            # POST to deploy endpoint
+            HTTP_STATUS=$(curl -s \
+              -o /tmp/deploy_response_single.json \
+              -w "%{http_code}" \
+              -X POST \
+              "${CPI_HOST}/api/v1/DeployIntegrationDesigntimeArtifact?Id='${ARTIFACT_ID}'&Version='Active'" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Accept: application/json")
+
+            echo "HTTP Status : $HTTP_STATUS"
+            echo "Response    :"
+            cat /tmp/deploy_response_single.json
+            echo ""
+
+            # Append to overall results JSON
+            RESPONSE_BODY=$(cat /tmp/deploy_response_single.json)
+            jq --arg id "$ARTIFACT_ID" \
+               --arg name "$ARTIFACT_NAME" \
+               --arg code "$HTTP_STATUS" \
+               --argjson body "$( echo "$RESPONSE_BODY" | jq '.' 2>/dev/null || echo '{}' )" \
+               '. += [{"ArtifactID": $id, "ArtifactName": $name, "HTTPCode": $code, "Response": $body}]' \
+               /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+               && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+
+            # SAP returns 200 (sync) or 202 (async accepted) for success
+            if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 202 ]; then
+              echo "SUCCESS: $ARTIFACT_NAME deployed."
+              DEPLOY_SUMMARY+=("✅ $ARTIFACT_NAME ($ARTIFACT_ID)")
+
+              # Update status to DEPLOYED in results
+              jq --arg id "$ARTIFACT_ID" \
+                 'map(if .ArtifactID == $id then .Status = "DEPLOYED" else . end)' \
+                 /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+                 && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+            else
+              echo "FAILED: $ARTIFACT_NAME — HTTP $HTTP_STATUS"
+              DEPLOY_SUMMARY+=("❌ $ARTIFACT_NAME ($ARTIFACT_ID) — HTTP $HTTP_STATUS")
+              FAILED=1
+
+              # Update status to FAILED in results
+              jq --arg id "$ARTIFACT_ID" \
+                 'map(if .ArtifactID == $id then .Status = "FAILED" else . end)' \
+                 /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+                 && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+            fi
+
           done < /tmp/iflows.txt
 
+          # ── Print summary ──
+          echo "══════════════════════════════════════════════"
+          echo "DEPLOYMENT SUMMARY"
+          echo "══════════════════════════════════════════════"
+          for LINE in "${DEPLOY_SUMMARY[@]}"; do
+            echo "$LINE"
+          done
+
+          # Copy final results for upload
+          cp /tmp/deploy_results.json /tmp/deploy_response.json
+
+          # Fail the job if any deploy failed
+          if [ "$FAILED" -ne 0 ]; then
+            echo ""
+            echo "One or more IFlows failed to deploy. See above for details."
+            exit 1
+          fi
+
+      # ─────────────────────────────────────────────
+      # STEP 4: Upload deployment results as artifact
+      # ─────────────────────────────────────────────
       - name: Upload Deployment Response
         if: always()
-        uses: actions/upload-artifact@v4  # Updated to v4
+        uses: actions/upload-artifact@v4
         with:
           name: deployment-response
           path: /tmp/deploy_response.json
