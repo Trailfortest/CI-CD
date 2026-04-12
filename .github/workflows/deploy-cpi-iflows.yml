@@ -1,63 +1,179 @@
-name: Deploy IFlows to SAP Integration Suite
+name: SAP CPI IFlow Deployment
 
 on:
+  workflow_dispatch:
+    inputs:
+      iflow_ids:
+        description: "Comma-separated list of IFlow IDs to deploy (leave empty to deploy all from iflows.json)"
+        required: false
+        default: ""
   push:
     branches:
-      - main  # Change this to your target branch or use 'workflow_dispatch' for manual triggers.
+      - main
 
 jobs:
-  deploy:
+  deploy-iflows:
     runs-on: ubuntu-latest
+    environment: dev   # same environment where secrets are stored
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
+      CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
+      CPI_TOKEN_URL: ${{ secrets.CPI_TOKEN_URL }}
+      CPI_HOST: ${{ secrets.CPI_HOST }}
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      # ---------------------------------------------------
+      # Step 1: Checkout the repository
+      # ---------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up environment variables
-        env:
-          CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
-          CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
-          CPI_HOST: ${{ secrets.CPI_HOST }}
-          CPI_TOKEN_URL: ${{ secrets.CPI_TOKEN_URL }}
-        run: |
-          echo "Setting up environment variables"
-
+      # ---------------------------------------------------
+      # Step 2: Get OAuth Token (same as your working script)
+      # ---------------------------------------------------
       - name: Get OAuth Token
+        id: get_token
+        shell: bash
         run: |
           echo "Generating OAuth Token..."
-          TOKEN_RESPONSE=$(curl -s -X POST "${CPI_TOKEN_URL}" \
+
+          BODY=$(curl -s -X POST \
+            "${CPI_TOKEN_URL}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials" \
             -d "client_id=${CPI_CLIENT_ID}" \
             -d "client_secret=${CPI_CLIENT_SECRET}")
 
-          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
-          if [ -z "$TOKEN" ]; then
-            echo "Error: Token generation failed"
+          echo "Response received from token endpoint."
+
+          TOKEN=$(printf '%s' "${BODY}" | jq -r '.access_token // empty' 2>/dev/null || true)
+
+          if [ "${#TOKEN}" -lt 10 ]; then
+            echo "ERROR: Token is empty or too short. Check your credentials."
+            echo "Response Body: ${BODY}"
             exit 1
           fi
-          echo "$TOKEN" > token.txt
-          echo "Token saved as token.txt"
 
-      - name: Deploy iFlows
+          # Save the token to a text file (same pattern as your working script)
+          printf '%s' "${TOKEN}" > /tmp/cpi_token.txt
+          echo "Token saved successfully to /tmp/cpi_token.txt, length: ${#TOKEN}"
+
+      # ---------------------------------------------------
+      # Step 3: Prepare IFlow List
+      # Reads from .github/workflows/iflows.json
+      # or uses manually provided IDs from workflow_dispatch input
+      # ---------------------------------------------------
+      - name: Prepare IFlow List
+        id: prepare_iflows
+        shell: bash
         run: |
-          # Assuming you have a JSON file with iFlow IDs to deploy
-          IFLW_JSON_FILE="github/workflows/Deployment_INTEGRATION_FLOW.json"  # Change this to your specific path
-          echo "Deploying iFlows from $IFLW_JSON_FILE"
-          
-          IFLW_LIST=$(jq -c '.IntegrationFlows[]' "$IFLW_JSON_FILE")
-          
-          for IFLOW in $IFLW_LIST; do
-            IFLW_ID=$(echo "$IFLOW" | jq -r '.ArtifactID')
-            IFLW_NAME=$(echo "$IFLOW" | jq -r '.ArtifactName')
+          MANUAL_INPUT="${{ github.event.inputs.iflow_ids }}"
 
-            echo "Deploying $IFLW_NAME ($IFLW_ID)..."
-            DEPLOY_RESPONSE=$(curl -s -X POST "${CPI_HOST}/api/v1/DeployIntegrationDesigntimeArtifact?Id=${IFLW_ID}&Version=Active" \
-              -H "Authorization: Bearer $(<token.txt)" \
+          if [ -n "$MANUAL_INPUT" ]; then
+            # Convert comma-separated input to JSON array
+            echo "Using manually provided IFlow IDs: $MANUAL_INPUT"
+            IFLOW_IDS=$(echo "$MANUAL_INPUT" | tr ',' '\n' | jq -R . | jq -s .)
+          else
+            # Read from iflows.json file
+            IFLOW_FILE=".github/workflows/iflows.json"
+            if [ ! -f "$IFLOW_FILE" ]; then
+              echo "ERROR: $IFLOW_FILE not found. Please create it or provide IFlow IDs manually."
+              exit 1
+            fi
+            echo "Reading IFlow list from $IFLOW_FILE"
+            IFLOW_IDS=$(jq '.iflows | map(.id)' "$IFLOW_FILE")
+          fi
+
+          echo "IFlows to deploy: $IFLOW_IDS"
+          echo "iflow_ids=$IFLOW_IDS" >> $GITHUB_OUTPUT
+
+      # ---------------------------------------------------
+      # Step 4: Deploy Each IFlow
+      # ---------------------------------------------------
+      - name: Deploy IFlows
+        shell: bash
+        run: |
+          TOKEN=$(cat /tmp/cpi_token.txt)
+          echo "Token length: ${#TOKEN}"
+
+          IFLOW_FILE=".github/workflows/iflows.json"
+          DEPLOY_RESULTS=()
+          FAILED_IFLOWS=()
+
+          # Read IFlow list from file or manual input
+          MANUAL_INPUT="${{ github.event.inputs.iflow_ids }}"
+
+          if [ -n "$MANUAL_INPUT" ]; then
+            # Build a temporary JSON from manual input
+            IFLOW_LIST=$(echo "$MANUAL_INPUT" | tr ',' '\n' | while read -r id; do
+              echo "{\"id\": \"$(echo $id | xargs)\", \"version\": \"Active\"}"
+            done | jq -s .)
+          else
+            IFLOW_LIST=$(jq '.iflows' "$IFLOW_FILE")
+          fi
+
+          TOTAL=$(echo "$IFLOW_LIST" | jq 'length')
+          echo "Total IFlows to deploy: $TOTAL"
+          echo "-------------------------------------------"
+
+          for i in $(seq 0 $((TOTAL - 1))); do
+            IFLOW_ID=$(echo "$IFLOW_LIST" | jq -r ".[$i].id")
+            IFLOW_VERSION=$(echo "$IFLOW_LIST" | jq -r ".[$i].version // \"Active\"")
+
+            echo "Deploying IFlow: $IFLOW_ID (Version: $IFLOW_VERSION)"
+
+            HTTP_STATUS=$(curl -s \
+              -o /tmp/deploy_response.json \
+              -w "%{http_code}" \
+              -X POST \
+              "${CPI_HOST}/api/v1/DeployIntegrationDesigntimeArtifact?Id='${IFLOW_ID}'&Version='${IFLOW_VERSION}'" \
+              -H "Authorization: Bearer ${TOKEN}" \
               -H "Accept: application/json")
 
-            if [[ $(echo "$DEPLOY_RESPONSE" | jq -r '.error') ]]; then
-              echo "Failed to deploy $IFLW_NAME: $(echo "$DEPLOY_RESPONSE" | jq -r '.error.message')"
+            RESPONSE_BODY=$(cat /tmp/deploy_response.json)
+            echo "HTTP Status for $IFLOW_ID: $HTTP_STATUS"
+            echo "Response: $RESPONSE_BODY"
+
+            if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 202 ]; then
+              echo "SUCCESS: $IFLOW_ID deployed successfully."
+              DEPLOY_RESULTS+=("SUCCESS: $IFLOW_ID")
             else
-              echo "Successfully deployed $IFLW_NAME"
+              echo "FAILED: $IFLOW_ID deployment failed with HTTP $HTTP_STATUS"
+              FAILED_IFLOWS+=("$IFLOW_ID")
+              DEPLOY_RESULTS+=("FAILED: $IFLOW_ID (HTTP $HTTP_STATUS)")
             fi
+
+            echo "-------------------------------------------"
           done
+
+          # Print final summary
+          echo ""
+          echo "==========================================="
+          echo "         DEPLOYMENT SUMMARY"
+          echo "==========================================="
+          for RESULT in "${DEPLOY_RESULTS[@]}"; do
+            echo "$RESULT"
+          done
+          echo "==========================================="
+
+          # Fail the workflow if any IFlow failed
+          if [ "${#FAILED_IFLOWS[@]}" -gt 0 ]; then
+            echo "ERROR: The following IFlows failed to deploy:"
+            for FAILED in "${FAILED_IFLOWS[@]}"; do
+              echo "  - $FAILED"
+            done
+            exit 1
+          fi
+
+          echo "All IFlows deployed successfully."
+
+      # ---------------------------------------------------
+      # Step 5: Upload Deployment Response as Artifact
+      # ---------------------------------------------------
+      - name: Upload Deployment Response
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-response
+          path: /tmp/deploy_response.json
