@@ -1,222 +1,63 @@
-name: SAP CPI Deploy / Undeploy iFlows
+name: Deploy IFlows to SAP Integration Suite
 
 on:
   push:
-    paths:
-      # ✅ UPDATED: trigger on JSON files inside .github/workflows
-      - '.github/workflows/**/Deployment_INTEGRATION_FLOW.json'
-  workflow_dispatch:
-    inputs:
-      package_id:
-        description: "Package ID to deploy"
-        required: true
-
-permissions:
-  contents: write
+    branches:
+      - main  # Change this to your target branch or use 'workflow_dispatch' for manual triggers.
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: dev
-    env:
-      CPI_CLIENT_ID:     ${{ secrets.CPI_CLIENT_ID }}
-      CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
-      CPI_TOKEN_URL:     ${{ secrets.CPI_TOKEN_URL }}
-      CPI_HOST:          ${{ secrets.CPI_HOST }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up environment variables
+        env:
+          CPI_CLIENT_ID: ${{ secrets.CPI_CLIENT_ID }}
+          CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
+          CPI_HOST: ${{ secrets.CPI_HOST }}
+          CPI_TOKEN_URL: ${{ secrets.CPI_TOKEN_URL }}
+        run: |
+          echo "Setting up environment variables"
 
       - name: Get OAuth Token
-        shell: bash
         run: |
-          BODY=$(curl -s -X POST "${CPI_TOKEN_URL}" \
+          echo "Generating OAuth Token..."
+          TOKEN_RESPONSE=$(curl -s -X POST "${CPI_TOKEN_URL}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "grant_type=client_credentials" \
             -d "client_id=${CPI_CLIENT_ID}" \
             -d "client_secret=${CPI_CLIENT_SECRET}")
 
-          TOKEN=$(printf '%s' "${BODY}" | jq -r '.access_token // empty')
-          if [ "${#TOKEN}" -lt 10 ]; then
-            echo "ERROR: Token too short or empty"
+          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
+          if [ -z "$TOKEN" ]; then
+            echo "Error: Token generation failed"
             exit 1
           fi
-          printf '%s' "${TOKEN}" > /tmp/cpi_token.txt
-          echo "Token saved. Length: ${#TOKEN}"
+          echo "$TOKEN" > token.txt
+          echo "Token saved as token.txt"
 
-      - name: Deploy / Undeploy iFlows
-        shell: bash
+      - name: Deploy iFlows
         run: |
-          TOKEN=$(cat /tmp/cpi_token.txt)
-          BASE_URL="${CPI_HOST%/}"
-          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          REPORT="deployment_status_report.md"
+          # Assuming you have a JSON file with iFlow IDs to deploy
+          IFLW_JSON_FILE="github/workflows/Deployment_INTEGRATION_FLOW.json"  # Change this to your specific path
+          echo "Deploying iFlows from $IFLW_JSON_FILE"
+          
+          IFLW_LIST=$(jq -c '.IntegrationFlows[]' "$IFLW_JSON_FILE")
+          
+          for IFLOW in $IFLW_LIST; do
+            IFLW_ID=$(echo "$IFLOW" | jq -r '.ArtifactID')
+            IFLW_NAME=$(echo "$IFLOW" | jq -r '.ArtifactName')
 
-          echo "# SAP CPI Deployment Status Report" > $REPORT
-          echo "**Run time:** ${TIMESTAMP}" >> $REPORT
-          echo "" >> $REPORT
-          echo "| iFlow ID | Action | Status | Message |" >> $REPORT
-          echo "|---|---|---|---|" >> $REPORT
+            echo "Deploying $IFLW_NAME ($IFLW_ID)..."
+            DEPLOY_RESPONSE=$(curl -s -X POST "${CPI_HOST}/api/v1/DeployIntegrationDesigntimeArtifact?Id=${IFLW_ID}&Version=Active" \
+              -H "Authorization: Bearer $(<token.txt)" \
+              -H "Accept: application/json")
 
-          # ✅ UPDATED: Find JSON files inside .github/workflows
-          find .github/workflows -name "Deployment_INTEGRATION_FLOW.json" | while read -r FILE; do
-            echo "=============================="
-            echo "Processing: $FILE"
-
-            PKG_ID=$(jq -r '.PackageIntegrationFlowDeployments.PackageID' "$FILE")
-            PKG_NAME=$(jq -r '.PackageIntegrationFlowDeployments.PackageName' "$FILE")
-            echo "Package: $PKG_NAME ($PKG_ID)"
-
-            while IFS= read -r IFLOW; do
-              IFLOW_ID=$(echo "$IFLOW" | jq -r '.ArtifactID')
-              IFLOW_NAME=$(echo "$IFLOW" | jq -r '.ArtifactName')
-              DEPLOY=$(echo "$IFLOW" | jq -r '.Deploy')
-              RANK=$(echo "$IFLOW" | jq -r '.Rank // "100"')
-              LOG_LEVEL=$(echo "$IFLOW" | jq -r '.LogLevel // "INFO"')
-
-              echo "------"
-              echo "iFlow: $IFLOW_ID | Deploy: $DEPLOY | Rank: $RANK"
-
-              if [ "$DEPLOY" = "true" ]; then
-                # ── DEPLOY ──────────────────────────────────────────────
-                echo "Deploying $IFLOW_ID..."
-
-                HTTP_STATUS=$(curl -s \
-                  -o /tmp/deploy_response.json \
-                  -w "%{http_code}" \
-                  -X POST \
-                  "${BASE_URL}/api/v1/DeployIntegrationDesigntimeArtifact?Id='${IFLOW_ID}'&Version='Active'" \
-                  -H "Authorization: Bearer ${TOKEN}" \
-                  -H "Accept: application/json")
-
-                echo "Deploy HTTP Status: $HTTP_STATUS"
-
-                if [ "$HTTP_STATUS" -eq 202 ] || [ "$HTTP_STATUS" -eq 200 ]; then
-                  echo "  DEPLOYED successfully: $IFLOW_ID"
-                  echo "| $IFLOW_ID | Deploy | SUCCESS ($HTTP_STATUS) | $IFLOW_NAME |" >> $REPORT
-
-                  # ── Set log level after deploy ─────────────────────
-                  sleep 3
-                  curl -s -X PUT \
-                    "${BASE_URL}/api/v1/IntegrationRuntimeArtifacts('${IFLOW_ID}')/\$links/LogConfiguration" \
-                    -H "Authorization: Bearer ${TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"logLevel\":\"${LOG_LEVEL}\"}" > /dev/null || true
-
-                else
-                  MSG=$(cat /tmp/deploy_response.json | jq -r '.error.message.value // "Unknown error"' 2>/dev/null || cat /tmp/deploy_response.json)
-                  echo "  FAILED to deploy $IFLOW_ID: $MSG"
-                  echo "| $IFLOW_ID | Deploy | FAILED ($HTTP_STATUS) | $MSG |" >> $REPORT
-                fi
-
-              elif [ "$DEPLOY" = "false" ]; then
-                # ── UNDEPLOY ─────────────────────────────────────────
-                echo "Checking if $IFLOW_ID is deployed..."
-
-                STATUS_CODE=$(curl -s \
-                  -o /tmp/status_response.json \
-                  -w "%{http_code}" \
-                  -X GET \
-                  "${BASE_URL}/api/v1/IntegrationRuntimeArtifacts('${IFLOW_ID}')" \
-                  -H "Authorization: Bearer ${TOKEN}" \
-                  -H "Accept: application/json")
-
-                if [ "$STATUS_CODE" -eq 200 ]; then
-                  RUNTIME_STATUS=$(cat /tmp/status_response.json | \
-                    jq -r '.d.Status // "UNKNOWN"' 2>/dev/null)
-                  echo "  Current status: $RUNTIME_STATUS"
-
-                  if [ "$RUNTIME_STATUS" = "STARTED" ] || \
-                     [ "$RUNTIME_STATUS" = "STARTING" ] || \
-                     [ "$RUNTIME_STATUS" = "DEPLOYED" ]; then
-
-                    HTTP_STATUS=$(curl -s \
-                      -o /tmp/undeploy_response.json \
-                      -w "%{http_code}" \
-                      -X DELETE \
-                      "${BASE_URL}/api/v1/IntegrationRuntimeArtifacts('${IFLOW_ID}')" \
-                      -H "Authorization: Bearer ${TOKEN}")
-
-                    if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 202 ]; then
-                      echo "  UNDEPLOYED successfully: $IFLOW_ID"
-                      echo "| $IFLOW_ID | Undeploy | SUCCESS ($HTTP_STATUS) | $IFLOW_NAME |" >> $REPORT
-                    else
-                      MSG=$(cat /tmp/undeploy_response.json | \
-                        jq -r '.error.message.value // "Unknown error"' 2>/dev/null || \
-                        cat /tmp/undeploy_response.json)
-                      echo "  FAILED to undeploy $IFLOW_ID: $MSG"
-                      echo "| $IFLOW_ID | Undeploy | FAILED ($HTTP_STATUS) | $MSG |" >> $REPORT
-                    fi
-                  else
-                    echo "  $IFLOW_ID is not running (status: $RUNTIME_STATUS) — skip undeploy"
-                    echo "| $IFLOW_ID | Undeploy | SKIPPED | Not running: $RUNTIME_STATUS |" >> $REPORT
-                  fi
-                else
-                  echo "  $IFLOW_ID not found in runtime — already undeployed"
-                  echo "| $IFLOW_ID | Undeploy | SKIPPED | Not in runtime |" >> $REPORT
-                fi
-              fi
-
-            done < <(jq -c '.PackageIntegrationFlowDeployments.IntegrationFlows[]' "$FILE")
+            if [[ $(echo "$DEPLOY_RESPONSE" | jq -r '.error') ]]; then
+              echo "Failed to deploy $IFLW_NAME: $(echo "$DEPLOY_RESPONSE" | jq -r '.error.message')"
+            else
+              echo "Successfully deployed $IFLW_NAME"
+            fi
           done
-
-          echo ""
-          echo "=============================="
-          echo "DEPLOYMENT REPORT:"
-          cat $REPORT
-
-      - name: Check Deploy Status
-        shell: bash
-        run: |
-          TOKEN=$(cat /tmp/cpi_token.txt)
-          BASE_URL="${CPI_HOST%/}"
-
-          echo "## Runtime Status After Deployment" >> deployment_status_report.md
-          echo "" >> deployment_status_report.md
-          echo "| iFlow ID | Runtime Status | Version |" >> deployment_status_report.md
-          echo "|---|---|---|" >> deployment_status_report.md
-
-          # ✅ CORRECT: already pointing to .github/workflows
-          find .github/workflows -name "Deployment_INTEGRATION_FLOW.json" | while read -r FILE; do
-            while IFS= read -r IFLOW_ID; do
-              sleep 1
-              RESPONSE=$(curl -s -X GET \
-                "${BASE_URL}/api/v1/IntegrationRuntimeArtifacts('${IFLOW_ID}')" \
-                -H "Authorization: Bearer ${TOKEN}" \
-                -H "Accept: application/json")
-
-              STATUS=$(echo "$RESPONSE" | jq -r '.d.Status // "NOT_DEPLOYED"' 2>/dev/null)
-              VERSION=$(echo "$RESPONSE" | jq -r '.d.Version // "-"' 2>/dev/null)
-
-              echo "| $IFLOW_ID | $STATUS | $VERSION |" >> deployment_status_report.md
-            done < <(jq -r '.PackageIntegrationFlowDeployments.IntegrationFlows[].ArtifactID' "$FILE")
-          done
-
-          cat deployment_status_report.md
-
-      - name: Save and Commit Report
-        shell: bash
-        run: |
-          # ✅ UPDATED: Save reports inside .github/workflows/reports
-          mkdir -p .github/workflows/reports
-          TIMESTAMP=$(date -u +"%Y%m%d_%H%M%S")
-
-          cp deployment_status_report.md \
-            ".github/workflows/reports/deployment_${TIMESTAMP}.md"
-          cp deployment_status_report.md \
-            ".github/workflows/reports/latest_deployment.md"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # ✅ UPDATED: Stage reports from new path
-          git add .github/workflows/reports/
-          git diff --cached --quiet || (
-            git commit -m "chore: deployment status report - ${TIMESTAMP}" &&
-            git pull --rebase origin main &&
-            git push origin main
-          )
