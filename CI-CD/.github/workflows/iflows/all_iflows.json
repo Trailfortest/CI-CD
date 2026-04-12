@@ -20,9 +20,9 @@
   {
     "Id": "testing_for_interface",
     "Name": "testing for interface",
-    "Version": "1.0.0",
+    "Version": "1.0.2",
     "PackageId": "Test",
-    "ModifiedAt": "1775564675843",
+    "ModifiedAt": "1775969129165",
     "CreatedAt": "1775564675832",
     "Description": "Testing of second interface"
   }
