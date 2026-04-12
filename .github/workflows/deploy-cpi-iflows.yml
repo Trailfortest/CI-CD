@@ -80,7 +80,7 @@ jobs:
 
       - name: Upload Deployment Response
         if: always()
-        uses: actions/upload-artifact@v3  # Updated version
+        uses: actions/upload-artifact@v4  # Updated to v4
         with:
           name: deployment-response
           path: /tmp/deploy_response.json
