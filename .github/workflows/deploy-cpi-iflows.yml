@@ -76,7 +76,7 @@ jobs:
             IFLOW_IDS=$(echo "$MANUAL_INPUT" | tr ',' '\n' | jq -R . | jq -s .)
           else
             # Read from iflows.json file
-            IFLOW_FILE=".github/workflows/iflows.json"
+            IFLOW_FILE=".github/workflows/Deployment_INTEGRATION_FLOW.json"
             if [ ! -f "$IFLOW_FILE" ]; then
               echo "ERROR: $IFLOW_FILE not found. Please create it or provide IFlow IDs manually."
               exit 1
