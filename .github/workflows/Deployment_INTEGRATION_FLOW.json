@@ -7,7 +7,7 @@
         "ArtifactID": "testing_for_interface",
         "ArtifactName": "testing for interface",
         "Deploy": true,
-        "status": Active,
+        "status": ACTIVE,
         "LogLevel": "INFO"
       }
     ]
