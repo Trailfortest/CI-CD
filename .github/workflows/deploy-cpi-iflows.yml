@@ -1,12 +1,22 @@
-name: SAP CPI IFlow Deployment
+name: SAP CPI IFlow Deploy/Undeploy
+
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Deployment Action"
+        required: true
+        default: "Deploy"
+        type: choice
+        options:
+          - Deploy
+          - Undeploy
   push:
     branches:
       - main
 
 jobs:
-  deploy-iflows:
+  deploy-undeploy-iflows:
     runs-on: ubuntu-latest
     environment: dev
     env:
@@ -15,13 +25,27 @@ jobs:
       CPI_CLIENT_SECRET: ${{ secrets.CPI_CLIENT_SECRET }}
       CPI_TOKEN_URL: ${{ secrets.CPI_TOKEN_URL }}
       CPI_HOST: ${{ secrets.CPI_HOST }}
+      # Default action to Deploy when triggered via push
+      ACTION: ${{ github.event.inputs.action || 'Deploy' }}
 
     steps:
       - name: Checkout the repository
         uses: actions/checkout@v4
 
       # ─────────────────────────────────────────────
-      # STEP 1: Get OAuth Token
+      # STEP 1: Validate Action Input
+      # ─────────────────────────────────────────────
+      - name: Validate Action Input
+        run: |
+          ACTION_LOWER=$(echo "$ACTION" | tr '[:upper:]' '[:lower:]')
+          if [ "$ACTION_LOWER" != "deploy" ] && [ "$ACTION_LOWER" != "undeploy" ]; then
+            echo "ERROR: Invalid action '$ACTION'. Must be 'Deploy' or 'Undeploy'."
+            exit 1
+          fi
+          echo "Action validated: $ACTION"
+
+      # ─────────────────────────────────────────────
+      # STEP 2: Get OAuth Token
       # ─────────────────────────────────────────────
       - name: Get OAuth Token
         id: get_token
@@ -49,9 +73,9 @@ jobs:
           echo "$TOKEN" > /tmp/cpi_token.txt
 
       # ─────────────────────────────────────────────
-      # STEP 2: Read IFlows from JSON config
+      # STEP 3: Read IFlows from JSON Config
       # ─────────────────────────────────────────────
-      - name: Read Interfaces from JSON
+      - name: Read IFlows from JSON Config
         id: read_iflows
         run: |
           IFLOW_FILE=".github/workflows/Deployment_INTEGRATION_FLOW.json"
@@ -64,7 +88,13 @@ jobs:
           echo "IFlow config file found. Contents:"
           cat "$IFLOW_FILE"
 
-          # Validate JSON structure
+          # Validate JSON is parseable
+          if ! jq empty "$IFLOW_FILE" 2>/dev/null; then
+            echo "ERROR: Invalid JSON in $IFLOW_FILE"
+            exit 1
+          fi
+
+          # Validate expected JSON structure
           if ! jq -e '.PackageIntegrationFlowDeployments.IntegrationFlows' "$IFLOW_FILE" > /dev/null 2>&1; then
             echo "ERROR: JSON structure invalid. Expected .PackageIntegrationFlowDeployments.IntegrationFlows"
             exit 1
@@ -73,114 +103,266 @@ jobs:
           IFLOW_COUNT=$(jq '.PackageIntegrationFlowDeployments.IntegrationFlows | length' "$IFLOW_FILE")
           echo "Total IFlows found: $IFLOW_COUNT"
 
+          if [ "$IFLOW_COUNT" -eq 0 ]; then
+            echo "No IFlows to process. Exiting."
+            exit 0
+          fi
+
           jq -c '.PackageIntegrationFlowDeployments.IntegrationFlows[]' "$IFLOW_FILE" > /tmp/iflows.txt
           echo "IFlows written to /tmp/iflows.txt"
 
       # ─────────────────────────────────────────────
-      # STEP 3: Deploy Integration Flows
+      # STEP 4: Deploy / Undeploy Integration Flows
       # ─────────────────────────────────────────────
-      - name: Deploy Integration Flows
+      - name: Deploy / Undeploy Integration Flows
         run: |
           TOKEN=$(cat /tmp/cpi_token.txt)
+          ACTION_LOWER=$(echo "$ACTION" | tr '[:upper:]' '[:lower:]')
 
-          DEPLOY_SUMMARY=()
           FAILED=0
+          DEPLOY_SUMMARY=()
 
-          # Initialise a summary JSON array for the artifact upload
+          # Initialise a summary JSON array for artifact upload
           echo "[]" > /tmp/deploy_results.json
 
           while IFS= read -r IFLOW; do
             ARTIFACT_ID=$(echo "$IFLOW"   | jq -r '.ArtifactID')
             ARTIFACT_NAME=$(echo "$IFLOW" | jq -r '.ArtifactName')
-            DEPLOY=$(echo "$IFLOW"        | jq -r '.Deploy')
+            ARTIFACT_TYPE=$(echo "$IFLOW" | jq -r '.ArtifactType // "Integration"')
+            DEPLOY_FLAG=$(echo "$IFLOW"   | jq -r '.Deploy')
+            LOGLEVEL=$(echo "$IFLOW"      | jq -r '.LogLevel // empty')
+            RUNTIMES=$(echo "$IFLOW"      | jq -r '.Runtimes // empty')
 
-            echo "──────────────────────────────────────────────"
-            echo "IFlow       : $ARTIFACT_NAME"
-            echo "Artifact ID : $ARTIFACT_ID"
-            echo "Deploy flag : $DEPLOY"
+            echo "=============================================="
+            echo "IFlow        : $ARTIFACT_NAME"
+            echo "Artifact ID  : $ARTIFACT_ID"
+            echo "Artifact Type: $ARTIFACT_TYPE"
+            echo "Action       : $ACTION"
+            echo "Deploy Flag  : $DEPLOY_FLAG"
 
-            if [ "$DEPLOY" != "true" ]; then
-              echo "Skipping (Deploy=false)"
-              jq --arg id "$ARTIFACT_ID" \
+            # Build optional info string
+            INFO_EXTRA=""
+            if [ -n "$LOGLEVEL" ]; then
+              INFO_EXTRA=" | LogLevel: $LOGLEVEL"
+              echo "LogLevel     : $LOGLEVEL"
+            fi
+            if [ -n "$RUNTIMES" ]; then
+              INFO_EXTRA="${INFO_EXTRA} | Runtimes: $RUNTIMES"
+              echo "Runtimes     : $RUNTIMES"
+            fi
+
+            echo "----------------------------------------------"
+
+            # ── Skip check (only for Deploy action) ──
+            if [ "$ACTION_LOWER" = "deploy" ] && [ "$DEPLOY_FLAG" != "true" ]; then
+              echo "Skipping $ARTIFACT_NAME (Deploy=false)"
+              jq --arg id   "$ARTIFACT_ID" \
                  --arg name "$ARTIFACT_NAME" \
                  --arg status "SKIPPED" \
                  --arg code "-" \
                  '. += [{"ArtifactID": $id, "ArtifactName": $name, "Status": $status, "HTTPCode": $code}]' \
                  /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
                  && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+              DEPLOY_SUMMARY+=("SKIPPED: $ARTIFACT_NAME ($ARTIFACT_ID)")
               continue
             fi
 
-            echo "Deploying..."
+            # ════════════════════════════════════════
+            # UNDEPLOY FLOW
+            # ════════════════════════════════════════
+            if [ "$ACTION_LOWER" = "undeploy" ]; then
+              echo "Performing UNDEPLOYMENT for $ARTIFACT_ID${INFO_EXTRA}"
+              echo "API: DELETE ${CPI_HOST}/api/v1/IntegrationRuntimeArtifacts('${ARTIFACT_ID}')"
 
-            # POST to deploy endpoint
-            HTTP_STATUS=$(curl -s \
-              -o /tmp/deploy_response_single.json \
-              -w "%{http_code}" \
-              -X POST \
-              "${CPI_HOST}/api/v1/DeployIntegrationDesigntimeArtifact?Id='${ARTIFACT_ID}'&Version='Active'" \
-              -H "Authorization: Bearer ${TOKEN}" \
-              -H "Accept: application/json")
+              curl_response=$(curl -s -w "\n%{http_code}" \
+                -X DELETE "${CPI_HOST}/api/v1/IntegrationRuntimeArtifacts('${ARTIFACT_ID}')" \
+                -H "Authorization: Bearer ${TOKEN}" \
+                -H "Accept: application/json")
 
-            echo "HTTP Status : $HTTP_STATUS"
-            echo "Response    :"
-            cat /tmp/deploy_response_single.json
-            echo ""
+              HTTP_STATUS=$(echo "$curl_response" | tail -n1)
+              BODY=$(echo "$curl_response" | sed '$d')
 
-            # Append to overall results JSON
-            RESPONSE_BODY=$(cat /tmp/deploy_response_single.json)
-            jq --arg id "$ARTIFACT_ID" \
-               --arg name "$ARTIFACT_NAME" \
-               --arg code "$HTTP_STATUS" \
-               --argjson body "$( echo "$RESPONSE_BODY" | jq '.' 2>/dev/null || echo '{}' )" \
-               '. += [{"ArtifactID": $id, "ArtifactName": $name, "HTTPCode": $code, "Response": $body}]' \
-               /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
-               && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+              echo "HTTP Status : $HTTP_STATUS"
 
-            # SAP returns 200 (sync) or 202 (async accepted) for success
-            if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 202 ]; then
-              echo "SUCCESS: $ARTIFACT_NAME deployed."
-              DEPLOY_SUMMARY+=("✅ $ARTIFACT_NAME ($ARTIFACT_ID)")
+              if [ "$HTTP_STATUS" != "202" ] && [ "$HTTP_STATUS" != "404" ]; then
+                echo "ERROR: HTTP $HTTP_STATUS received while requesting undeployment."
+                echo "Response body: $BODY"
+                FAILED=1
+                jq --arg id   "$ARTIFACT_ID" \
+                   --arg name "$ARTIFACT_NAME" \
+                   --arg code "$HTTP_STATUS" \
+                   --arg status "FAILED" \
+                   '. += [{"ArtifactID": $id, "ArtifactName": $name, "Status": $status, "HTTPCode": $code}]' \
+                   /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+                   && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+                DEPLOY_SUMMARY+=("FAILED (Undeploy): $ARTIFACT_NAME ($ARTIFACT_ID) -- HTTP $HTTP_STATUS")
+                continue
+              fi
 
-              # Update status to DEPLOYED in results
-              jq --arg id "$ARTIFACT_ID" \
-                 'map(if .ArtifactID == $id then .Status = "DEPLOYED" else . end)' \
-                 /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
-                 && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+              echo "Undeployment request accepted for $ARTIFACT_ID. Polling for status..."
+
+            # ════════════════════════════════════════
+            # DEPLOY FLOW
+            # ════════════════════════════════════════
             else
-              echo "FAILED: $ARTIFACT_NAME — HTTP $HTTP_STATUS"
-              DEPLOY_SUMMARY+=("❌ $ARTIFACT_NAME ($ARTIFACT_ID) — HTTP $HTTP_STATUS")
-              FAILED=1
+              echo "Performing DEPLOYMENT for $ARTIFACT_ID${INFO_EXTRA}"
+              echo "API: POST ${CPI_HOST}/api/v1/Deploy${ARTIFACT_TYPE}DesigntimeArtifact?Id='${ARTIFACT_ID}'&Version='active'"
 
-              # Update status to FAILED in results
-              jq --arg id "$ARTIFACT_ID" \
-                 'map(if .ArtifactID == $id then .Status = "FAILED" else . end)' \
+              curl_response=$(curl -s -w "\n%{http_code}" \
+                -X POST "${CPI_HOST}/api/v1/Deploy${ARTIFACT_TYPE}DesigntimeArtifact?Id='${ARTIFACT_ID}'&Version='active'" \
+                -H "Authorization: Bearer ${TOKEN}" \
+                -H "Accept: application/json")
+
+              HTTP_STATUS=$(echo "$curl_response" | tail -n1)
+              BODY=$(echo "$curl_response" | sed '$d')
+
+              echo "HTTP Status : $HTTP_STATUS"
+              echo "Response    : $BODY"
+
+              if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "202" ]; then
+                echo "ERROR: HTTP $HTTP_STATUS received while requesting deployment."
+                echo "Response body: $BODY"
+                FAILED=1
+                jq --arg id   "$ARTIFACT_ID" \
+                   --arg name "$ARTIFACT_NAME" \
+                   --arg code "$HTTP_STATUS" \
+                   --arg status "FAILED" \
+                   '. += [{"ArtifactID": $id, "ArtifactName": $name, "Status": $status, "HTTPCode": $code}]' \
+                   /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+                   && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+                DEPLOY_SUMMARY+=("FAILED (Deploy): $ARTIFACT_NAME ($ARTIFACT_ID) -- HTTP $HTTP_STATUS")
+                continue
+              fi
+
+              echo "Deployment request accepted for $ARTIFACT_ID. Polling for status..."
+            fi
+
+            # ════════════════════════════════════════
+            # POLLING LOOP (Exponential Backoff)
+            # ════════════════════════════════════════
+            MAX_TOTAL=7200   # 2 hours max
+            MAX_WAIT=60      # Cap individual wait at 60s
+            WAIT=1
+            ELAPSED=0
+            EXIT_REASON="timeout"
+
+            echo "Polling status: GET ${CPI_HOST}/api/v1/IntegrationRuntimeArtifacts('${ARTIFACT_ID}')?\$select=Status"
+
+            while [ $ELAPSED -lt $MAX_TOTAL ]; do
+              poll_response=$(curl -s -w "\n%{http_code}" \
+                -X GET "${CPI_HOST}/api/v1/IntegrationRuntimeArtifacts('${ARTIFACT_ID}')?\$select=Status" \
+                -H "Authorization: Bearer ${TOKEN}" \
+                -H "Accept: application/json")
+
+              POLL_HTTP=$(echo "$poll_response" | tail -n1)
+              POLL_BODY=$(echo "$poll_response" | sed '$d')
+
+              # ── Undeploy polling ──
+              if [ "$ACTION_LOWER" = "undeploy" ]; then
+                if [ "$POLL_HTTP" != "200" ] && [ "$POLL_HTTP" != "404" ]; then
+                  echo "ERROR: HTTP $POLL_HTTP received while polling undeployment status."
+                  echo "Response body: $POLL_BODY"
+                  EXIT_REASON="error"
+                  FAILED=1
+                  break
+                fi
+                if [ "$POLL_HTTP" = "404" ]; then
+                  echo "SUCCESS: $ARTIFACT_NAME successfully undeployed."
+                  EXIT_REASON="success"
+                  jq --arg id   "$ARTIFACT_ID" \
+                     --arg name "$ARTIFACT_NAME" \
+                     --arg code "$POLL_HTTP" \
+                     --arg status "UNDEPLOYED" \
+                     '. += [{"ArtifactID": $id, "ArtifactName": $name, "Status": $status, "HTTPCode": $code}]' \
+                     /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+                     && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+                  DEPLOY_SUMMARY+=("SUCCESS (Undeployed): $ARTIFACT_NAME ($ARTIFACT_ID)")
+                  break
+                fi
+
+              # ── Deploy polling ──
+              else
+                if [ "$POLL_HTTP" = "200" ]; then
+                  echo "$POLL_BODY" > /tmp/poll_body.json
+                  STATUS=$(jq -r '.d.Status' /tmp/poll_body.json)
+                  echo "Current runtime status: $STATUS"
+
+                  if [ "$STATUS" = "STARTED" ]; then
+                    echo "SUCCESS: $ARTIFACT_NAME is STARTED."
+                    EXIT_REASON="success"
+                    jq --arg id   "$ARTIFACT_ID" \
+                       --arg name "$ARTIFACT_NAME" \
+                       --arg code "$POLL_HTTP" \
+                       --arg status "DEPLOYED" \
+                       '. += [{"ArtifactID": $id, "ArtifactName": $name, "Status": $status, "HTTPCode": $code}]' \
+                       /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+                       && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+                    DEPLOY_SUMMARY+=("SUCCESS (Deployed/STARTED): $ARTIFACT_NAME ($ARTIFACT_ID)")
+                    break
+                  elif [ "$STATUS" = "ERROR" ]; then
+                    echo "WARNING: $ARTIFACT_NAME ended with status ERROR. Continuing..."
+                    EXIT_REASON="success"
+                    jq --arg id   "$ARTIFACT_ID" \
+                       --arg name "$ARTIFACT_NAME" \
+                       --arg code "$POLL_HTTP" \
+                       --arg status "ERROR" \
+                       '. += [{"ArtifactID": $id, "ArtifactName": $name, "Status": $status, "HTTPCode": $code}]' \
+                       /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
+                       && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+                    DEPLOY_SUMMARY+=("ERROR (Runtime): $ARTIFACT_NAME ($ARTIFACT_ID)")
+                    break
+                  fi
+                fi
+              fi
+
+              # ── Backoff wait ──
+              CURRENT_WAIT=$WAIT
+              if [ $CURRENT_WAIT -gt $MAX_WAIT ]; then
+                CURRENT_WAIT=$MAX_WAIT
+              fi
+              echo "Waiting ${CURRENT_WAIT}s... (Elapsed: ${ELAPSED}s)"
+              sleep $CURRENT_WAIT
+              ELAPSED=$((ELAPSED + CURRENT_WAIT))
+              WAIT=$((WAIT * 2))
+            done
+
+            # ── Handle timeout ──
+            if [ "$EXIT_REASON" = "timeout" ]; then
+              echo "ERROR: Reached maximum wait time of ${MAX_TOTAL}s for $ARTIFACT_ID without success."
+              FAILED=1
+              jq --arg id   "$ARTIFACT_ID" \
+                 --arg name "$ARTIFACT_NAME" \
+                 --arg code "TIMEOUT" \
+                 --arg status "TIMEOUT" \
+                 '. += [{"ArtifactID": $id, "ArtifactName": $name, "Status": $status, "HTTPCode": $code}]' \
                  /tmp/deploy_results.json > /tmp/deploy_results_tmp.json \
                  && mv /tmp/deploy_results_tmp.json /tmp/deploy_results.json
+              DEPLOY_SUMMARY+=("TIMEOUT: $ARTIFACT_NAME ($ARTIFACT_ID)")
             fi
 
           done < /tmp/iflows.txt
 
-          # ── Print summary ──
-          echo "══════════════════════════════════════════════"
-          echo "DEPLOYMENT SUMMARY"
-          echo "══════════════════════════════════════════════"
+          # ── Print Summary ──
+          echo "=============================================="
+          echo "  DEPLOYMENT SUMMARY -- Action: $ACTION"
+          echo "=============================================="
           for LINE in "${DEPLOY_SUMMARY[@]}"; do
-            echo "$LINE"
+            echo "  $LINE"
           done
+          echo "=============================================="
 
-          # Copy final results for upload
+          # Copy final results for artifact upload
           cp /tmp/deploy_results.json /tmp/deploy_response.json
 
-          # Fail the job if any deploy failed
+          # Fail job if any artifact failed
           if [ "$FAILED" -ne 0 ]; then
             echo ""
-            echo "One or more IFlows failed to deploy. See above for details."
+            echo "One or more IFlows failed. See above for details."
             exit 1
           fi
 
       # ─────────────────────────────────────────────
-      # STEP 4: Upload deployment results as artifact
+      # STEP 5: Upload Deployment Results as Artifact
       # ─────────────────────────────────────────────
       - name: Upload Deployment Response
         if: always()
