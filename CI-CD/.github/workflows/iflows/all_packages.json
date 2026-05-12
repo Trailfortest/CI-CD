@@ -1,12 +1,7 @@
 [
   {
-    "Id": "checksecondpackage",
-    "Name": "check second package",
-    "Version": ""
-  },
-  {
-    "Id": "Test",
-    "Name": "Test",
+    "Id": "test",
+    "Name": "test",
     "Version": "1.0.0"
   }
 ]

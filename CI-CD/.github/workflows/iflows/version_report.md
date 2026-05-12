@@ -1,31 +1,31 @@
 # SAP CPI Interface Version Report
 
-**Generated:** 2026-05-08 05:25:10 UTC
+**Generated:** 2026-05-12 06:08:03 UTC
 
 ## All Interfaces
 
 | Interface ID | Name | Version | Package | Last Modified |
 |---|---|---|---|---|
-| check2 | check2 | 1.0.0 | checksecondpackage | 1776255421120 |
-| testing_for_interface | testing for interface | 1.0.2 | Test | 1775969129165 |
-| MyiFlow | MyiFlow | Active | Test | 1777896185206 |
+| POC | POC | Active | test | 1778499352983 |
 
 ## Changed Interfaces Since Last Run
 
 | Interface ID | Name | Old Version | New Version | Package |
 |---|---|---|---|---|
-| — | No changes detected | — | — | — |
+| POC | POC | ➕ NEW | Active | test |
 
 ## Deleted Interfaces
 
 | Interface ID | Name | Last Known Version |
 |---|---|---|
-| — | No deletions detected | — |
+| check2 | check2 | 1.0.0 |
+| testing_for_interface | testing for interface | 1.0.2 |
+| MyiFlow | MyiFlow | Active |
 
 ## Summary
 
 | Metric | Count |
 |---|---|
-| Total Interfaces | 3 |
-| Changed / New    | 0 |
-| Deleted          | 0 |
+| Total Interfaces | 1 |
+| Changed / New    | 1 |
+| Deleted          | 3 |
